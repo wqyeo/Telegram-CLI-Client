@@ -5,6 +5,7 @@
 /target/
 /dist/
 /native-build/
+/.m2/
 
 # IDE and editor files
 /.idea/
@@ -24,6 +25,8 @@ Desktop.ini
 .env.*
 !.env.example
 /config.local.*
+/mise.local.toml
+/mise.local.*.toml
 *.key
 *.pem
 *.p12

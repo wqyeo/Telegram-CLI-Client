@@ -1,0 +1,58 @@
+stages:
+  - verify
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+
+verify-linux:
+  stage: verify
+  image: eclipse-temurin:25-jdk
+  cache:
+    key: "maven-linux-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .m2/repository/
+  script:
+    - ./mvnw --batch-mode --no-transfer-progress verify
+    - java -jar target/telegram-cli.jar --version
+    - java -jar target/telegram-cli.jar diagnostics --json
+    - java -jar target/telegram-cli.jar demo --json
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
+    paths:
+      - target/surefire-reports/
+      - target/telegram-cli.jar
+
+# Opt in only after registering a Windows PowerShell runner with a full JDK 25.
+# Linux CI does not establish native Windows or interactive TUI compatibility.
+verify-windows:
+  stage: verify
+  tags:
+    - windows
+    - jdk25
+  rules:
+    - if: '$ENABLE_WINDOWS_CI == "true"'
+  cache:
+    key: "maven-windows-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .m2/repository/
+  script:
+    - |
+      & .\mvnw.cmd --batch-mode --no-transfer-progress verify
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - |
+      java -jar target/telegram-cli.jar --version
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - |
+      java -jar target/telegram-cli.jar diagnostics --json
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - |
+      java -jar target/telegram-cli.jar demo --json
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
