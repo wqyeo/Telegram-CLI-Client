@@ -18,7 +18,8 @@ public final class DemoRenderer {
 
     public void render(Screen screen, DemoController ui, ClientState state) {
         screen.doResizeIfNecessary();
-        screen.clear();
+        // Reset only the back buffer. Screen.clear() forces a physical clear/full repaint.
+        screen.newTextGraphics().setForegroundColor(NORMAL).setBackgroundColor(BACKGROUND).fill(' ');
         screen.setCursorPosition(null);
         int width = screen.getTerminalSize().getColumns();
         int height = screen.getTerminalSize().getRows();

@@ -12,6 +12,92 @@ import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal;
 import org.junit.jupiter.api.Test;
 
 class DemoRendererTest {
+    private static class CountingTerminal extends DefaultVirtualTerminal {
+        int clears;
+        int characters;
+        int flushes;
+        CountingTerminal() { super(new TerminalSize(100, 30)); }
+        @Override public void clearScreen() { clears++; super.clearScreen(); }
+        @Override public void putString(String text) { characters += text.length(); super.putString(text); }
+        @Override public void flush() { flushes++; super.flush(); }
+    }
+
+    @Test void unchangedFramesDoNotClearOrRewriteThePhysicalTerminal() throws Exception {
+        var scenario = DemoScenario.standard();
+        var ui = new DemoController(scenario, (a, b) -> fail());
+        var state = new ClientState(ConnectionStatus.READY, scenario.messages());
+        var terminal = new CountingTerminal();
+        try (terminal; var screen = new TerminalScreen(terminal)) {
+            screen.startScreen();
+            var renderer = new DemoRenderer();
+            renderer.render(screen, ui, state); screen.refresh();
+            int clears = terminal.clears;
+            int characters = terminal.characters;
+            for (int i = 0; i < 30; i++) { renderer.render(screen, ui, state); screen.refresh(); }
+            assertEquals(clears, terminal.clears, "unchanged frames must not physically clear the screen");
+            assertEquals(characters, terminal.characters, "unchanged frames must not rewrite text");
+        }
+    }
+
+    @Test void composerEditsUseSmallDeltasAndEraseDeletedText() throws Exception {
+        var scenario = DemoScenario.standard();
+        var ui = new DemoController(scenario, (a, b) -> fail());
+        ui.handle(new KeyStroke(KeyType.Tab)); ui.handle(new KeyStroke(KeyType.Tab));
+        var state = new ClientState(ConnectionStatus.READY, scenario.messages());
+        var terminal = new CountingTerminal();
+        try (terminal; var screen = new TerminalScreen(terminal)) {
+            screen.startScreen();
+            var renderer = new DemoRenderer();
+            renderer.render(screen, ui, state); screen.refresh();
+            int clears = terminal.clears;
+            int characters = terminal.characters;
+            ui.handle(new KeyStroke('x', false, false));
+            renderer.render(screen, ui, state); screen.refresh();
+            assertEquals(clears, terminal.clears);
+            assertTrue(terminal.characters > characters && terminal.characters - characters < 40,
+                    "one character must not rewrite the whole screen");
+            assertEquals("x", terminal.getCharacter(25, 25).getCharacterString());
+            ui.handle(new KeyStroke(KeyType.Backspace));
+            renderer.render(screen, ui, state); screen.refresh();
+            assertEquals(clears, terminal.clears);
+            assertEquals(" ", terminal.getCharacter(25, 25).getCharacterString());
+        }
+    }
+
+    @Test @org.junit.jupiter.api.Timeout(5)
+    void idleInputLoopDoesNotRefreshTheTerminal() throws Exception {
+        var terminal = new CountingTerminal();
+        int[] polls = {0};
+        int[] initialFlushes = {0};
+        assertEquals(0, new TuiApplication().run(terminal, DemoScenario.standard(), 100, () -> {
+            int poll = polls[0]++;
+            if (poll == 0) { initialFlushes[0] = terminal.flushes; }
+            else if (poll <= 3) {
+                assertEquals(initialFlushes[0], terminal.flushes, "idle polling must not flush another frame");
+            }
+            if (poll == 3) { terminal.addInput(new KeyStroke(KeyType.EOF)); }
+        }));
+        assertEquals(5, polls[0]);
+    }
+
+    @Test @org.junit.jupiter.api.Timeout(5)
+    void resizesWithoutNeedingAKeypressOrStateUpdate() throws Exception {
+        var terminal = new CountingTerminal();
+        int[] polls = {0};
+        int[] initialFlushes = {0};
+        assertEquals(0, new TuiApplication().run(terminal, DemoScenario.standard(), 100, () -> {
+            int poll = polls[0]++;
+            if (poll == 0) {
+                initialFlushes[0] = terminal.flushes;
+                terminal.setTerminalSize(new TerminalSize(48, 14));
+            } else if (poll == 1) {
+                assertEquals(initialFlushes[0] + 1, terminal.flushes, "resize alone must repaint");
+                terminal.addInput(new KeyStroke(KeyType.EOF));
+            }
+        }));
+        assertEquals(3, polls[0]);
+    }
+
     @Test void safelyRendersUnicodeAndControlsAcrossResizes() throws Exception {
         var scenario = DemoScenario.standard();
         var ui = new DemoController(scenario, (a, b) -> fail());

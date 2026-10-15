@@ -19,6 +19,34 @@ class TerminalRepliesTest(unittest.TestCase):
         self.assertEqual([], terminal.feed(b'H\x1b[6'))
         self.assertEqual([b'\x1b[14;48R'], terminal.feed(b'n'))
 
+    def test_reconstructs_status_updated_by_deltas(self):
+        terminal = TerminalReplies(lambda: (30, 100))
+        terminal.feed(b'\x1b[29;1HSynthetic data only. No Telegram connection.')
+        chunks = [b'\x1b[29;2Himula\x1b[29;', b'8Hed\x1b[29;11Hloc',
+                  b'\x1b[29;15Hlly. Nothing was sent to Telegram.']
+        for chunk in chunks:
+            terminal.feed(chunk)
+        self.assertNotIn(b'Simulated locally', b''.join(chunks))
+        self.assertIn('Simulated locally. Nothing was sent to Telegram.', terminal.text())
+        self.assertNotIn('Synthetic data only', terminal.text())
+
+    def test_clear_and_new_text_replace_visible_content(self):
+        terminal = TerminalReplies(lambda: (30, 100))
+        terminal.feed(b'\x1b[2;1Hstale\x1b[2J\x1b[2;1Hnew')
+        self.assertNotIn('stale', terminal.text())
+        self.assertIn('new', terminal.text())
+        self.assertEqual([b'\x1b[2;4R'], terminal.feed(b'\x1b[6n'))
+        terminal.feed(b'\x1b[?1049h')
+        self.assertNotIn('new', terminal.text())
+
+    def test_handles_fragmented_utf8_without_losing_cursor_columns(self):
+        terminal = TerminalReplies(lambda: (30, 100))
+        encoded = '你x'.encode()
+        terminal.feed(encoded[:2])
+        terminal.feed(encoded[2:])
+        self.assertTrue(terminal.text().startswith('你 x'))
+        self.assertEqual([b'\x1b[1;4R'], terminal.feed(b'\x1b[6n'))
+
     def test_uses_current_dimensions(self):
         dimensions = [30, 100]
         terminal = TerminalReplies(lambda: tuple(dimensions))

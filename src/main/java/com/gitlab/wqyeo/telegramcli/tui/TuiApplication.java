@@ -2,6 +2,7 @@ package com.gitlab.wqyeo.telegramcli.tui;
 
 import com.gitlab.wqyeo.telegramcli.application.DemoScenario;
 import com.gitlab.wqyeo.telegramcli.application.InteractiveDemoSession;
+import com.gitlab.wqyeo.telegramcli.model.ClientState;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
@@ -23,15 +24,22 @@ public final class TuiApplication {
             var controller = new DemoController(scenario, session::simulateSubmit);
             var renderer = new DemoRenderer();
             screen.startScreen();
+            ClientState renderedState = null;
             while (controller.running()) {
+                boolean redraw = screen.doResizeIfNecessary() != null;
                 for (int i = 0; i < 128; i++) {
                     var input = screen.pollInput();
                     if (input == null) { break; }
+                    redraw = true;
                     controller.handle(input);
                     if (!controller.running()) { break; }
                 }
-                renderer.render(screen, controller, session.latest());
-                screen.refresh();
+                var state = session.latest();
+                if (redraw || state != renderedState) {
+                    renderer.render(screen, controller, state);
+                    screen.refresh();
+                    renderedState = state;
+                }
                 frameHook.run();
                 if (controller.running()) { Thread.sleep(33); }
             }
