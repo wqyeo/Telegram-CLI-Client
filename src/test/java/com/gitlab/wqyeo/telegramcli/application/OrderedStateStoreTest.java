@@ -51,6 +51,18 @@ class OrderedStateStoreTest {
         }
     }
 
+    @Test void latestIsACoalescedImmutableViewWithoutEnqueuingSnapshotWork() throws Exception {
+        try (var store = new OrderedStateStore(10)) {
+            var initial = store.latest();
+            store.accept(message("chat", "1", "first"));
+            var barrier = store.snapshot().get(2, TimeUnit.SECONDS);
+            assertSame(barrier, store.latest());
+            for (int i = 0; i < 10_000; i++) { assertSame(barrier, store.latest()); }
+            assertTrue(initial.messages().isEmpty());
+            assertThrows(UnsupportedOperationException.class, () -> store.latest().messages().clear());
+        }
+    }
+
     @Test void closedStoreRejectsRatherThanDropsEvents() {
         var store = new OrderedStateStore(2);
         store.close();

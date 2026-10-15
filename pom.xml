@@ -35,6 +35,8 @@
     <picocli.version>4.7.7</picocli.version>
     <jackson.version>2.22.3</jackson.version>
     <junit.version>5.14.4</junit.version>
+    <lanterna.version>3.1.5</lanterna.version>
+    <tdlib.revision>a94b83d67ab4c8397c6245e541b31a4131ea2f79</tdlib.revision>
   </properties>
   <dependencyManagement>
     <dependencies>
@@ -56,6 +58,11 @@
   </dependencyManagement>
   <dependencies>
     <dependency>
+      <groupId>com.googlecode.lanterna</groupId>
+      <artifactId>lanterna</artifactId>
+      <version>${lanterna.version}</version>
+    </dependency>
+    <dependency>
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
       <version>${picocli.version}</version>
@@ -73,6 +80,11 @@
   <build>
     <finalName>telegram-cli</finalName>
     <resources>
+      <resource>
+        <directory>native</directory>
+        <targetPath>native</targetPath>
+        <includes><include>tdlib.lock.json</include></includes>
+      </resource>
       <resource>
         <directory>${project.basedir}</directory>
         <targetPath>META-INF</targetPath>
@@ -157,6 +169,8 @@
             <goals><goal>shade</goal></goals>
             <configuration>
               <createDependencyReducedPom>false</createDependencyReducedPom>
+              <!-- Keep LGPL Lanterna replaceable instead of embedding it in our JAR. -->
+              <artifactSet><excludes><exclude>com.googlecode.lanterna:lanterna</exclude></excludes></artifactSet>
               <filters>
                 <filter>
                   <artifact>*:*</artifact>
@@ -178,9 +192,28 @@
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>com.gitlab.wqyeo.telegramcli.Main</mainClass>
-                  <manifestEntries><Multi-Release>true</Multi-Release></manifestEntries>
+                  <manifestEntries>
+                    <Multi-Release>true</Multi-Release>
+                    <Class-Path>lib/lanterna-${lanterna.version}.jar</Class-Path>
+                  </manifestEntries>
                 </transformer>
               </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.11.0</version>
+        <executions>
+          <execution>
+            <id>replaceable-terminal-library</id>
+            <phase>prepare-package</phase>
+            <goals><goal>copy-dependencies</goal></goals>
+            <configuration>
+              <includeArtifactIds>lanterna</includeArtifactIds>
+              <outputDirectory>${project.build.directory}/lib</outputDirectory>
             </configuration>
           </execution>
         </executions>
@@ -192,4 +225,40 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <profile>
+      <id>native</id>
+      <dependencies>
+        <dependency>
+          <groupId>com.gitlab.wqyeo.thirdparty</groupId>
+          <artifactId>tdlib-java</artifactId>
+          <version>${tdlib.revision}</version>
+          <scope>provided</scope>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <version>3.6.2</version>
+            <executions>
+              <execution>
+                <id>native-probe-source</id>
+                <phase>generate-sources</phase>
+                <goals><goal>add-source</goal></goals>
+                <configuration><sources><source>src/native/java</source></sources></configuration>
+              </execution>
+              <execution>
+                <id>native-probe-tests</id>
+                <phase>generate-test-sources</phase>
+                <goals><goal>add-test-source</goal></goals>
+                <configuration><sources><source>src/native-test/java</source></sources></configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

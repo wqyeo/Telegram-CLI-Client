@@ -1,0 +1,36 @@
+Unofficial Telegram CLI: MIT; Copyright (c) 2026 Yeo Wen Qin.
+This project is not affiliated with or endorsed by Telegram.
+
+Java dependencies:
+- Picocli 4.7.7: Apache License 2.0, Remko Popma and contributors.
+- Jackson 2.22.3: Apache License 2.0, FasterXML and contributors.
+- Lanterna 3.1.5: LGPL 3.0 or later, Martin Berglund and contributors.
+  Lanterna is distributed as a separate, replaceable lib/lanterna-3.1.5.jar.
+  Its exact Maven Central source JAR and GPL/LGPL texts accompany app images.
+  You may modify/replace this library and reverse engineer the combined work
+  to debug those modifications. No application restriction overrides those rights.
+  Rebuild a compatible replacement with a JDK, or replace the separate JAR.
+
+Optional native bundle:
+- TDLib: Boost Software License 1.0; exact revision/source hash in tdlib.lock.json.
+- OpenSSL: Apache License 2.0; distribution copyright notice in native/licenses.
+- zlib: zlib license; distribution copyright notice in native/licenses.
+- GCC runtime: GPL 3 with GCC Runtime Library Exception; notices in native/licenses.
+  Linux JNI statically links OpenSSL and GCC runtimes. Its bundled zlib shared
+  library uses installation-relative lookup; glibc remains a system dependency.
+  Bundle manifests enumerate actual distributed files; inspect ldd/readelf results.
+
+Self-contained distributions include a Temurin JDK-derived runtime. Its own
+legal/ directory supplies OpenJDK and third-party notices. Preserve that directory.
+Java component licenses/notices from the shaded application remain in its JAR.
+The application MIT license does not relicense these dependencies.
+
+Sources and build instructions:
+https://gitlab.com/wqyeo/telegram-cli
+https://gitlab.com/wqyeo/telegram-cli/-/wikis/Development
+https://repo.maven.apache.org/maven2/com/googlecode/lanterna/lanterna/3.1.5/
+https://github.com/tdlib/td
+
+Distribution SHA-256 manifests detect accidental changes; they are not signatures.
+No native or Windows build is claimed bit-for-bit reproducible. Windows recipes
+must be executed and validated on native Windows before publishing Windows builds.

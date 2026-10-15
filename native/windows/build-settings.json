@@ -1,0 +1,9 @@
+{
+  "status": "recipe-only; NOT executed or validated on Windows",
+  "architecture": "x64",
+  "generator": "Visual Studio 17 2022",
+  "vcpkgRevision": "20ceb8adbf0504d4b0d5e4058a32f9d4fc896391",
+  "vcpkgTriplet": "x64-windows-static",
+  "configuration": "Release",
+  "tuiBlocker": "The Lanterna 3.1.5 core runtime JAR lacks WindowsTerminal. The full upstream tree has an older, unintegrated JNA 4.4 prototype with resize handling unimplemented. Resolve and validate a native console backend before a Windows TUI release; no GUI fallback is allowed."
+}

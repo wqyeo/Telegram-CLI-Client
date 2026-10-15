@@ -1,0 +1,9 @@
+FROM docker.io/library/ubuntu:24.04@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b
+# Local/manual builder, not a published image or CI prerequisite. Apt versions are
+# recorded in each bundle; the build is not claimed to be bit-reproducible.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential ca-certificates cmake ninja-build gperf libssl-dev zlib1g-dev \
+    pkg-config python3 && rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/opt/jdk
+ENV PATH=/opt/jdk/bin:$PATH
+WORKDIR /work

@@ -6,6 +6,8 @@
 /dist/
 /native-build/
 /.m2/
+__pycache__/
+*.pyc
 
 # IDE and editor files
 /.idea/

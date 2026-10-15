@@ -41,7 +41,7 @@ class MainTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"--help", "demo --help", "diagnostics --help"})
+    @ValueSource(strings = {"--help", "demo --help", "diagnostics --help", "tui --help", "native-check --help"})
     void helpIsAvailable(String arguments) {
         var result = run(arguments.split(" "));
         assertEquals(0, result.exit());
@@ -111,6 +111,17 @@ class MainTest {
         assertTrue(result.err().contains("Configuration is invalid or unreadable"));
         assertFalse(result.err().contains("DO_NOT_PRINT_THIS"));
         assertFalse(result.err().contains("Exception"));
+    }
+
+    @Test void nativeProbeFailureIsStructuredAndRedacted() throws Exception {
+        var result = run("native-check", "--bundle", temporary.resolve("DO_NOT_PRINT").toString(), "--json");
+        assertEquals(1, result.exit());
+        assertEquals("", result.err());
+        var report = JsonMapper.builder().build().readTree(result.out());
+        assertEquals(1, report.get("schemaVersion").intValue());
+        assertEquals("error", report.get("status").textValue());
+        assertFalse(result.out().contains("DO_NOT_PRINT"));
+        assertFalse(result.out().contains("Exception"));
     }
 
     @Test void missingConfigurationFailsButDoesNotPreventHelp() {

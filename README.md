@@ -5,9 +5,10 @@ planned as its Telegram engine. Independent of and not endorsed by Telegram.
 
 ## Status
 
-**Offline scaffold only—not yet a Telegram client.** Help/version, local
-diagnostics, and a synthetic demo are available. There is no real login, TDLib
-loading, messaging, session storage, or full-screen TUI yet.
+**Offline prototype—not yet a usable Telegram client.** Includes local diagnostics,
+a synthetic Linux terminal UI, and an opt-in, account-free TDLib JNI probe.
+There is no real login, messaging, or session storage. Windows recipes are
+**unverified**; its native terminal backend remains unavailable.
 
 ## Build and try
 
@@ -17,15 +18,20 @@ With [mise](https://mise.jdx.dev/), run `mise trust`, `mise install`, and prefix
 commands with `mise exec --` if the toolchain is not activated in your shell.
 
 ```sh
-./mvnw --batch-mode --no-transfer-progress verify
+./mvnw --batch-mode --no-transfer-progress clean verify
 java -jar target/telegram-cli.jar --help
 java -jar target/telegram-cli.jar diagnostics --json
 java -jar target/telegram-cli.jar demo --json
+java -jar target/telegram-cli.jar tui --demo
 ```
 
-On Windows PowerShell, use `.\mvnw.cmd` instead of `./mvnw`. The development JAR
-requires Java 25; it does not bundle a runtime. Native Windows execution and the
-future terminal backend require separate validation.
+Keep `target/lib/` beside the development JAR: Lanterna is a separate, replaceable
+library. The JAR requires Java 25; self-contained Linux images are built separately.
+Checks are invoked manually; CI/CD work is deferred.
+
+For the optional JNI build and app image, see the wiki's
+[offline prototype guide](https://gitlab.com/wqyeo/telegram-cli/-/wikis/Offline-Prototype).
+On Windows PowerShell use `.\mvnw.cmd`; Windows execution is not validated by Linux tests.
 
 ## Documentation
 
@@ -39,4 +45,4 @@ Detailed documentation lives in the [GitLab wiki](https://gitlab.com/wqyeo/teleg
 ## License
 
 [MIT](LICENSE), copyright (c) 2026 Yeo Wen Qin. Third-party components retain their
-own licenses; future releases must include their required notices.
+own licenses; see [third-party notices](THIRD-PARTY-NOTICES.txt).

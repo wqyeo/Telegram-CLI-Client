@@ -15,8 +15,8 @@ public final class OrderedStateStore implements AutoCloseable {
             1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(256),
             Thread.ofPlatform().name("telegram-state-", 0).factory(),
             new ThreadPoolExecutor.AbortPolicy());
-    private ClientState state = ClientState.initial();
-    private RuntimeException failure;
+    private volatile ClientState state = ClientState.initial();
+    private volatile RuntimeException failure;
 
     public OrderedStateStore(int historyLimit) {
         reducer = new StateReducer(historyLimit);
@@ -33,6 +33,14 @@ public final class OrderedStateStore implements AutoCloseable {
                 }
             }
         });
+    }
+
+    /** A coalesced immutable view; never enqueues render work on the state executor. */
+    public ClientState latest() {
+        if (failure != null) {
+            throw new IllegalStateException("State processing failed.", failure);
+        }
+        return state;
     }
 
     /** The queued barrier observes all previously accepted events. */

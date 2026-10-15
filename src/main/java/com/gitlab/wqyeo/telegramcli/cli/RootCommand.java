@@ -19,8 +19,8 @@ import picocli.CommandLine.ParentCommand;
 import picocli.CommandLine.Spec;
 
 @Command(name = "tgc", mixinStandardHelpOptions = true, versionProvider = RootCommand.VersionProvider.class,
-        description = "Unofficial Telegram CLI — offline scaffold; no Telegram connection is available.",
-        subcommands = {RootCommand.Diagnostics.class, RootCommand.Demo.class})
+        description = "Unofficial Telegram CLI — offline prototype; no Telegram connection is available.",
+        subcommands = {RootCommand.Diagnostics.class, RootCommand.Demo.class, TuiCommand.class, NativeCheckCommand.class})
 public final class RootCommand implements Runnable {
     @Spec
     private CommandSpec spec;
@@ -34,7 +34,7 @@ public final class RootCommand implements Runnable {
         spec.commandLine().usage(spec.commandLine().getOut());
     }
 
-    private AppConfig config() {
+    AppConfig config() {
         try {
             return new ConfigLoader().load(configFile);
         } catch (IOException | IllegalArgumentException exception) {
@@ -82,7 +82,7 @@ public final class RootCommand implements Runnable {
             if (json) {
                 out.println(JsonMapper.builder().build().writeValueAsString(report));
             } else {
-                out.println("Offline scaffold — TDLib is not integrated; no Telegram connection was made.");
+                out.println("Offline prototype — real Telegram engine is not integrated; no Telegram connection was made.");
                 out.printf("Java: %d%nPlatform: %s%nProfile: %s%n", report.javaFeature(),
                         TerminalText.escapeControls(report.operatingSystem()), config.profile());
                 out.println("Config directory (not created): " + TerminalText.escapeControls(report.configDirectory()));
