@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Opt-in Linux terminal experiment only; not an application dependency or Windows validation",
+  "version": "4.4.8",
+  "sourceRevision": "72c9a4cd180362d73b198681a6a41f7ed8f28fda",
+  "license": "BSD-3-Clause",
+  "files": [
+    {"name":"jline-terminal-4.4.8.jar","sha256":"04eeba70db2eaef85a6c9e2a2413667833730189fd2359540ac4e9d8902becb1","size":434666},
+    {"name":"jline-terminal-4.4.8-sources.jar","sha256":"e28fa08bcfd4a2ad4028b3a46376eed2dae9040fad497b6ea9c338266825c4f1","size":352373},
+    {"name":"jline-terminal-4.4.8.pom","sha256":"3622f8b843705e3343a1791de86d931fd4d5040dfd059516f2313bcb2dfe7842","size":3775},
+    {"name":"jline-terminal-ffm-4.4.8.jar","sha256":"a31b808fa3848c24914cac9278c4483ca1d7fba28e63a3a2a36fc9b6635ccac7","size":76847},
+    {"name":"jline-terminal-ffm-4.4.8-sources.jar","sha256":"de795c024fc0dcb150ba2a89cd71584db2d91e9cdd1bb0f072344528c3189391","size":38726},
+    {"name":"jline-terminal-ffm-4.4.8.pom","sha256":"956c2a2539af9e7549b0e78c788ffc9849b62b3aec20154a6572a5eb5132256b","size":3904},
+    {"name":"jline-native-4.4.8.jar","sha256":"606dcaa307c04080ad0d18fc150b078d84c2b7933e893434c7d7004c72ddfffc","size":218858},
+    {"name":"jline-native-4.4.8-sources.jar","sha256":"c09d8cf41484d80e6e0eb4df3f8677bcb6c512120c646e5f00f01cc3ab471a0e","size":209112},
+    {"name":"jline-native-4.4.8.pom","sha256":"4057f842abe7fc4ac33199baac4aca0d83aa60b58a7ad98764f286d1fe75f6c7","size":4238},
+    {"name":"JLine-LICENSE.txt","sha256":"44e55d448e3324fa5b8f26b42556ee4a758aa27bbcb86babe32c144b5aa11ac0","size":1529}
+  ]
+}
