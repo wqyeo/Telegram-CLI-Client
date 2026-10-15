@@ -1,0 +1,40 @@
+# Local agent state
+/.pi/
+
+# Build and packaging output
+/target/
+/dist/
+/native-build/
+
+# IDE and editor files
+/.idea/
+/.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+/config.local.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Runtime data: keep sessions, messages, media, and logs out of Git
+/runtime/
+/sessions/
+/downloads/
+/logs/
+*.log
+hs_err_pid*
+replay_pid*
+*.hprof
