@@ -6,6 +6,8 @@ import com.gitlab.wqyeo.telegramcli.config.AppConfig;
 import com.gitlab.wqyeo.telegramcli.config.ConfigLoader;
 import com.gitlab.wqyeo.telegramcli.model.ClientState;
 import com.gitlab.wqyeo.telegramcli.platform.AppDirectories;
+import com.gitlab.wqyeo.telegramcli.session.ConsoleCredentialInput;
+import com.gitlab.wqyeo.telegramcli.session.CredentialInput;
 import com.gitlab.wqyeo.telegramcli.tui.TerminalText;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -20,8 +22,15 @@ import picocli.CommandLine.Spec;
 
 @Command(name = "tgc", mixinStandardHelpOptions = true, versionProvider = RootCommand.VersionProvider.class,
         description = "Unofficial Telegram CLI — offline prototype; no Telegram connection is available.",
-        subcommands = {RootCommand.Diagnostics.class, RootCommand.Demo.class, TuiCommand.class, NativeCheckCommand.class})
+        subcommands = {RootCommand.Diagnostics.class, RootCommand.Demo.class, TuiCommand.class, NativeCheckCommand.class,
+                ProfileInitCommand.class, SessionCheckCommand.class, VaultCommands.Create.class, VaultCommands.Check.class})
 public final class RootCommand implements Runnable {
+    private final CredentialInput.Factory credentialInput;
+    /** Lazy method reference: ordinary commands never select/open a secret input implementation. */
+    public RootCommand() { this(ConsoleCredentialInput::open); }
+    public RootCommand(CredentialInput.Factory credentialInput) { this.credentialInput = java.util.Objects.requireNonNull(credentialInput); }
+    CredentialInput.Factory credentialInput() { return credentialInput; }
+
     @Spec
     private CommandSpec spec;
 

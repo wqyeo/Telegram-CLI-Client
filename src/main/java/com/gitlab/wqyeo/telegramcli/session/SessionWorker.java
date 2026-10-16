@@ -44,7 +44,8 @@ public final class SessionWorker {
             String joined = String.join(File.pathSeparator, classpath.stream().map(Path::toString).toList());
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-Xmx128m", "-Dfile.encoding=UTF-8", "-XX:-UsePerfData", "-XX:-CreateCoredumpOnCrash", "-XX:ErrorFile=/dev/null",
-                    "--enable-native-access=ALL-UNNAMED", "-Djava.library.path=" + bundle.directory(), "-cp", joined, WORKER,
+                    "--enable-native-access=ALL-UNNAMED", "--illegal-native-access=deny",
+                    "-Djava.library.path=" + bundle.directory(), "-cp", joined, WORKER,
                     workspace.toString(), profile, generation.toString())
                     .directory(bundle.directory().toFile()).redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.environment().clear(); builder.environment().put("LC_ALL", "C.UTF-8");

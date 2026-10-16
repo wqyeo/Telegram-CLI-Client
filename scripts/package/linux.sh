@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+output="$PWD/dist"
+case $# in
+    0) ;;
+    1) [[ $1 == --help ]] || { echo 'Usage: scripts/package/linux.sh [--output NEW_ABSOLUTE_DIRECTORY]' >&2; exit 2; }
+       echo 'Usage: scripts/package/linux.sh [--output NEW_ABSOLUTE_DIRECTORY]'; exit 0 ;;
+    2) [[ $1 == --output ]] || { echo 'Usage: scripts/package/linux.sh [--output NEW_ABSOLUTE_DIRECTORY]' >&2; exit 2; }
+       output=$2 ;;
+    *) echo 'Usage: scripts/package/linux.sh [--output NEW_ABSOLUTE_DIRECTORY]' >&2; exit 2 ;;
+esac
 : "${JAVA_HOME:?Run with mise exec -- scripts/package/linux.sh (full JDK 25).}"
 [[ $(uname -m) == x86_64 && $(uname -s) == Linux ]] || { echo 'Linux x86_64 is required.' >&2; exit 2; }
 for tool in jdeps jlink jpackage python3; do command -v "$tool" >/dev/null; done
 bundle=native-build/bundles/linux-x86_64
 [[ -f $bundle/manifest.json ]] || { echo 'Build the native bundle first: scripts/native/build-linux.sh' >&2; exit 2; }
+# Reserve before build; no existing image/archive/output directory is ever removed.
+python3 scripts/package/linux-stage.py "$output"
 ./mvnw -Pnative clean verify
 java -jar target/telegram-cli.jar native-check --bundle "$bundle" --json
 readarray -t versions < <(python3 - <<'PY'
@@ -62,25 +73,35 @@ jlink --add-modules "$modules,jdk.crypto.ec,jdk.unsupported" --output target/run
 # Keep runtime/bin/java: the native probe needs a bounded child JVM.
 [[ -x target/runtime/bin/java ]]
 python3 - <<'PY'
-import json,subprocess,pathlib
+import hashlib,json,subprocess,pathlib
+# Record the actual checkout bytes as well as HEAD/dirty state; do not label WIP clean.
+names=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z']).split(b'\0')
+source_lines=[]
+for name in sorted(set(names)-{b''}):
+    path=pathlib.Path(name.decode('utf-8'))
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit('Source tree contains a missing/non-regular input')
+    source_lines.append(hashlib.sha256(path.read_bytes()).hexdigest()+'  '+path.as_posix())
+source_bytes=('\n'.join(source_lines)+'\n').encode('utf-8')
+pathlib.Path('target/package-input/build-provenance/source-tree.sha256').write_bytes(source_bytes)
 record={'schemaVersion':1,'sourceCommit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+        'sourceTreeInventorySha256':hashlib.sha256(source_bytes).hexdigest(),
         'workingTreeDirty':bool(subprocess.check_output(['git','status','--porcelain'],text=True).strip()),
         'javaVersion':subprocess.check_output(['java','--version'],text=True).splitlines()[0],
         'windowsValidated':False,'reproducibleNativeBuildClaimed':False}
 pathlib.Path('target/package-input/build-provenance/application.json').write_text(json.dumps(record,indent=2)+'\n')
 PY
 # --license-file is installer-only; app-image notices are staged under licenses/.
-# Remove only the previous generated app image, never user profiles or data.
-rm -rf -- dist/telegram-cli
+# Output was atomically reserved above; failed/partial output is retained, not repaired.
 jpackage --type app-image --name telegram-cli --app-version "$version" \
     --vendor 'Yeo Wen Qin' --description 'Offline unofficial Telegram terminal prototype' \
     --input "$input" --main-jar telegram-cli.jar --main-class com.gitlab.wqyeo.telegramcli.Main \
-    --runtime-image target/runtime --dest dist \
+    --runtime-image target/runtime --dest "$output" \
     --java-options '-Dtgc.native.bundle=$APPDIR/native' --java-options '-Dfile.encoding=UTF-8' \
     --java-options '-XX:-UsePerfData' --java-options '--add-modules=jdk.unsupported'
-python3 - <<'PY'
-import hashlib,pathlib
-root=pathlib.Path('dist/telegram-cli')
+PACKAGE_OUTPUT="$output" python3 - <<'PY'
+import hashlib,os,pathlib
+root=pathlib.Path(os.environ['PACKAGE_OUTPUT'])/'telegram-cli'
 lines=[]
 for path in sorted(root.rglob('*')):
     if path.is_file():
@@ -88,6 +109,6 @@ for path in sorted(root.rglob('*')):
 (root/'SHA256SUMS').write_text('\n'.join(lines)+'\n')
 PY
 archive="telegram-cli-$version-linux-x86_64.tar.gz"
-tar --sort=name --owner=0 --group=0 --numeric-owner -C dist -czf "dist/$archive" telegram-cli
-(cd dist && sha256sum "$archive" > "$archive.sha256")
-printf '\nCreated dist/%s (manual Linux validation still required).\n' "$archive"
+tar --sort=name --owner=0 --group=0 --numeric-owner -C "$output" -czf "$output/$archive" telegram-cli
+(cd "$output" && sha256sum "$archive" > "$archive.sha256")
+printf '\nCreated %s/%s (manual Linux validation still required).\n' "$output" "$archive"

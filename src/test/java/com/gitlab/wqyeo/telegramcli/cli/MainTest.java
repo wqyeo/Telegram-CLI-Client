@@ -41,7 +41,8 @@ class MainTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"--help", "demo --help", "diagnostics --help", "tui --help", "native-check --help"})
+    @ValueSource(strings = {"--help", "demo --help", "diagnostics --help", "tui --help", "native-check --help",
+            "profile-init --help", "session-check --help", "vault-create --help", "vault-check --help"})
     void helpIsAvailable(String arguments) {
         var result = run(arguments.split(" "));
         assertEquals(0, result.exit());
@@ -122,6 +123,57 @@ class MainTest {
         assertEquals("error", report.get("status").textValue());
         assertFalse(result.out().contains("DO_NOT_PRINT"));
         assertFalse(result.out().contains("Exception"));
+    }
+
+    @Test void profileInitializationIsExplicitAndNeverOverwrites() throws Exception {
+        Path missing = temporary.resolve("missing-workspace");
+        var refused = run("profile-init", "--workspace", missing.toString(), "--profile", "work", "--json");
+        assertEquals(1, refused.exit()); assertFalse(Files.exists(missing));
+        var initialized = run("profile-init", "--workspace", temporary.toString(), "--profile", "work", "--json");
+        if (!System.getProperty("os.name").equalsIgnoreCase("linux")) {
+            assertEquals(1, initialized.exit()); return;
+        }
+        assertEquals(0, initialized.exit()); assertEquals("", initialized.err());
+        Path metadata = temporary.resolve("work/profile.json");
+        byte[] before = Files.readAllBytes(metadata);
+        assertEquals(1, run("profile-init", "--workspace", temporary.toString(), "--profile", "work", "--json").exit());
+        assertArrayEquals(before, Files.readAllBytes(metadata));
+        try (var files = Files.list(temporary.resolve("work"))) {
+            assertEquals(java.util.Set.of("profile.json", "profile.lock"), files.map(file -> file.getFileName().toString()).collect(java.util.stream.Collectors.toSet()));
+        }
+    }
+
+    @Test void workerCheckRefusesWithoutImplicitInitializationOrRawPaths() throws Exception {
+        Path missing = temporary.resolve("DO_NOT_PRINT");
+        var result = run("session-check", "--workspace", missing.toString(), "--profile", "work", "--bundle", missing.toString(), "--json");
+        assertEquals(1, result.exit()); assertEquals("", result.err());
+        var report = JsonMapper.builder().build().readTree(result.out());
+        assertEquals("error", report.path("status").textValue());
+        String expected = !com.gitlab.wqyeo.telegramcli.session.SessionWorker.integrated() ? "NATIVE_NOT_BUILT"
+                : System.getProperty("os.name").equalsIgnoreCase("linux") ? "BUNDLE_INVALID" : "STORAGE_UNSUPPORTED";
+        assertEquals(expected, report.path("code").textValue());
+        assertFalse(result.out().contains("DO_NOT_PRINT")); assertFalse(Files.exists(missing));
+        assertEquals(2, run("profile-init", "--workspace", temporary.toString()).exit());
+        assertEquals(2, run("session-check", "--profile", "work").exit());
+    }
+
+    @Test void workerHoldDurationIsBoundedBeforeAnyWorkerOrFiles() throws Exception {
+        for (String seconds : new String[] {"-1", "31", "2147483647"}) {
+            Path missing = temporary.resolve("never-created");
+            var result = run("session-check", "--workspace", missing.toString(), "--profile", "work", "--hold-seconds", seconds, "--json");
+            assertEquals(2, result.exit()); assertEquals("", result.err());
+            assertEquals("INVALID_ARGUMENT", JsonMapper.builder().build().readTree(result.out()).path("code").textValue());
+            assertFalse(Files.exists(missing));
+        }
+    }
+
+    @Test void terminalModesRequireOneTrueAcknowledgmentAndScenarioCannotChangeTheOldDemo() {
+        for (String[] args : new String[][] {
+                {"tui", "--demo", "--read-only-demo"}, {"tui", "--demo=false"}, {"tui", "--read-only-demo=false"},
+                {"tui", "--demo", "--auth-scenario", "FULL"}, {"tui", "--auth-scenario", "FULL"}}) {
+            var result = run(args); assertEquals(2, result.exit()); assertEquals("", result.out()); assertFalse(result.err().isBlank());
+        }
+        assertTrue(run("tui", "--help").out().contains("--read-only-demo"));
     }
 
     @Test void missingConfigurationFailsButDoesNotPreventHelp() {

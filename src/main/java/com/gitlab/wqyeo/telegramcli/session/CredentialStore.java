@@ -9,7 +9,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.*;
 import java.util.*;
 
-/** Explicit encrypted storage only; not called by existing CLI or any live session. */
+/** Explicit encrypted storage only; never opens a Telegram client or account database. */
 public final class CredentialStore {
     private static final Set<PosixFilePermission> PRIVATE = PosixFilePermissions.fromString("rw-------");
     private final Path configWorkspace;
@@ -26,16 +26,31 @@ public final class CredentialStore {
         } catch (IOException | RuntimeException exception) { throw new CredentialException(STORAGE_INVALID); }
     }
 
+    /** Nonmutating prompt preflight; actual operations must still revalidate against races. */
+    public void preflight(String profile, boolean creating) throws CredentialException {
+        try (var lease = ProfileStore.acquire(dataWorkspace, profile);
+             var directory = ProfileStore.workspace(configWorkspace)) {
+            Path name = filename(profile);
+            if (creating) { requireMissing(directory, name); }
+            else if (attributes(directory, name).fileKey() == null) { throw new CredentialException(STORAGE_INVALID); }
+        } catch (CredentialException exception) { throw exception; }
+        catch (IOException | RuntimeException exception) { throw new CredentialException(STORAGE_INVALID); }
+    }
+
+    private static void requireMissing(SecureDirectoryStream<Path> directory, Path name) throws IOException {
+        try {
+            directory.getFileAttributeView(name, BasicFileAttributeView.class, NOFOLLOW_LINKS).readAttributes();
+            throw new CredentialException(ALREADY_EXISTS);
+        } catch (NoSuchFileException expected) { /* explicit initial creation only */ }
+    }
+
     public void create(String profile, char[] passphrase, CredentialMaterial material) throws CredentialException {
         byte[] encrypted = null;
         try (var lease = ProfileStore.acquire(dataWorkspace, profile);
              var directory = ProfileStore.workspace(configWorkspace)) {
             Path name = filename(profile);
             // Fail existing files before deriving; never replace, truncate or repair them.
-            try {
-                directory.getFileAttributeView(name, BasicFileAttributeView.class, NOFOLLOW_LINKS).readAttributes();
-                throw new CredentialException(ALREADY_EXISTS);
-            } catch (NoSuchFileException expected) { /* initial creation only */ }
+            requireMissing(directory, name);
             encrypted = CredentialEnvelope.seal(profile, passphrase, material);
             try (var channel = directory.newByteChannel(name,
                     Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, NOFOLLOW_LINKS),

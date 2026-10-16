@@ -5,10 +5,11 @@ planned as its Telegram engine. Independent of and not endorsed by Telegram.
 
 ## Status
 
-**Offline prototype—not yet a usable Telegram client.** Includes local diagnostics,
-a synthetic Linux terminal UI, and an opt-in, account-free TDLib JNI probe.
-There is no real login, messaging, or session storage. Windows recipes are
-**unverified**; its native terminal backend remains unavailable.
+**Offline prototype—not yet a usable Telegram account client.** Includes synthetic
+Linux terminal UIs, explicit local profile/encrypted-vault tools and an account-free
+native-worker check. The read-only preview uses public fixtures, not a real account.
+There is no operational login, TDLib account database, live messaging or account-session
+reuse. Windows recipes are **unverified**; native Windows terminal execution is refused.
 
 ## Build and try
 
@@ -23,11 +24,16 @@ java -jar target/telegram-cli.jar --help
 java -jar target/telegram-cli.jar diagnostics --json
 java -jar target/telegram-cli.jar demo --json
 java -jar target/telegram-cli.jar tui --demo
+java -jar target/telegram-cli.jar tui --read-only-demo
 ```
 
-Keep `target/lib/` beside the development JAR: Lanterna is a separate, replaceable
-library. The JAR requires Java 25; self-contained Linux images are built separately.
-Checks are invoked manually; CI/CD work is deferred.
+The read-only guide advances fixed public inputs with Enter: **never type credentials
+into it**. It then shows bounded synthetic chats and Saved Messages text, without a
+composer or send action. The original demo remains separate.
+
+Keep `target/lib/` beside the development JAR: Lanterna and the original Bouncy Castle
+JAR are separate runtime dependencies; Lanterna remains replaceable. Java 25 is required;
+self-contained Linux images are built separately. Checks are manual; CI/CD is deferred.
 
 For the optional JNI build and app image, see the wiki's
 [offline prototype guide](https://gitlab.com/wqyeo/telegram-cli/-/wikis/Offline-Prototype).
@@ -37,6 +43,7 @@ On Windows PowerShell use `.\mvnw.cmd`; Windows execution is not validated by Li
 
 Detailed documentation lives in the [GitLab wiki](https://gitlab.com/wqyeo/telegram-cli/-/wikis/home):
 
+- [Offline read-only preview and local setup](https://gitlab.com/wqyeo/telegram-cli/-/wikis/Offline-Read-Only-Preview)
 - [Development](https://gitlab.com/wqyeo/telegram-cli/-/wikis/Development)
 - [Architecture](https://gitlab.com/wqyeo/telegram-cli/-/wikis/Architecture)
 - [Security and roadmap](https://gitlab.com/wqyeo/telegram-cli/-/wikis/Security-and-Roadmap)

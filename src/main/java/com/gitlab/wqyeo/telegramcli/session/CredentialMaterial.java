@@ -31,7 +31,7 @@ public final class CredentialMaterial implements AutoCloseable {
         this.databaseKey = new SecretMaterial(databaseKey);
     }
 
-    /** Only explicit provisioning calls this; existing commands never do. */
+    /** Only explicit provisioning calls this; it never initializes an engine or account database. */
     public static CredentialMaterial generate(int apiId, byte[] apiHash) {
         byte[] key = new byte[32];
         try { new SecureRandom().nextBytes(key); return new CredentialMaterial(apiId, apiHash, key); }

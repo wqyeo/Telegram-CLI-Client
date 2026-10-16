@@ -12,6 +12,7 @@ public final class NativeSessionWorker {
     public static void main(String[] args) {
         int status = 0;
         try {
+            NativeWorkerPermissions.restrict();
             if (args.length != 3) { throw new IllegalArgumentException(); }
             UUID generation = UUID.fromString(args[2]);
             try (var lease = ProfileStore.acquire(Path.of(args[0]), args[1]);
