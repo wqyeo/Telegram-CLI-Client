@@ -15,24 +15,36 @@ version=root.findtext('{*}version').removesuffix('-SNAPSHOT')
 lanterna=root.findtext('.//{*}lanterna.version')
 if lanterna != json.load(open('licenses/lanterna-source.json'))['version']:
     raise SystemExit('Lanterna source version mismatch')
-print(version);print(lanterna)
+crypto=root.findtext('.//{*}bouncycastle.version')
+if crypto != json.load(open('licenses/bouncycastle-source.json'))['version']:
+    raise SystemExit('Bouncy Castle source version mismatch')
+print(version);print(lanterna);print(crypto)
 PY
 )
-version=${versions[0]}; lanterna=${versions[1]}
+version=${versions[0]}; lanterna=${versions[1]}; crypto=${versions[2]}
 input=target/package-input
 mkdir -p "$input/lib" "$input/licenses" "$input/build-provenance"
 cp target/telegram-cli.jar "$input/"
-cp "target/lib/lanterna-$lanterna.jar" "$input/lib/"
+cp "target/lib/lanterna-$lanterna.jar" "target/lib/bcprov-jdk18on-$crypto.jar" "$input/lib/"
 cp -R "$bundle" "$input/native"
 cp LICENSE THIRD-PARTY-NOTICES.txt licenses/*.txt "$input/licenses/"
-cp native/tdlib.lock.json licenses/lanterna-source.json pom.xml "$input/build-provenance/"
+cp native/tdlib.lock.json licenses/lanterna-source.json licenses/bouncycastle-source.json pom.xml "$input/build-provenance/"
 cp native-build/linux-builder-packages.txt "$input/build-provenance/"
 ./mvnw org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy \
     "-Dartifact=com.googlecode.lanterna:lanterna:$lanterna:jar:sources" "-DoutputDirectory=$PWD/$input/licenses"
 ./mvnw org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy \
     "-Dartifact=com.googlecode.lanterna:lanterna:$lanterna:pom" "-DoutputDirectory=$PWD/$input/licenses"
+for classifier in jar:sources pom; do
+    ./mvnw org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy \
+        "-Dartifact=org.bouncycastle:bcprov-jdk18on:$crypto:$classifier" "-DoutputDirectory=$PWD/$input/licenses"
+done
 python3 - <<'PY'
 import hashlib,json,pathlib,urllib.request
+for entry in json.load(open('licenses/bouncycastle-source.json'))['files']:
+    base = 'target/package-input/lib' if entry['name'].endswith('.jar') and not entry['name'].endswith('-sources.jar') else 'target/package-input/licenses'
+    file = pathlib.Path(base, entry['name'])
+    if file.stat().st_size != entry['bytes'] or hashlib.sha256(file.read_bytes()).hexdigest() != entry['sha256']:
+        raise SystemExit('Bouncy Castle artifact integrity mismatch')
 lock=json.load(open('licenses/lanterna-source.json'))
 archive=pathlib.Path('native-build/downloads/lanterna-'+lock['version']+'-source.tar.gz')
 if not archive.exists():
@@ -42,7 +54,7 @@ if hashlib.sha256(archive.read_bytes()).hexdigest() != lock['sha256']:
 pathlib.Path('target/package-input/licenses/lanterna-source.tar.gz').write_bytes(archive.read_bytes())
 PY
 modules=$(jdeps --multi-release 25 --ignore-missing-deps --print-module-deps \
-    target/telegram-cli.jar "target/lib/lanterna-$lanterna.jar" "$bundle/tdlib-java.jar")
+    target/telegram-cli.jar "target/lib/lanterna-$lanterna.jar" "target/lib/bcprov-jdk18on-$crypto.jar" "$bundle/tdlib-java.jar")
 printf '%s\n' "$modules" > "$input/build-provenance/jdeps-modules.txt"
 # Lanterna loads sun.misc.Signal reflectively for SIGWINCH; jdeps cannot infer it.
 jlink --add-modules "$modules,jdk.crypto.ec,jdk.unsupported" --output target/runtime \

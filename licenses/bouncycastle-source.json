@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "groupId": "org.bouncycastle",
+  "artifactId": "bcprov-jdk18on",
+  "version": "1.86",
+  "upstreamSourceTag": "r1rv86",
+  "upstreamLicenseUrl": "https://raw.githubusercontent.com/bcgit/bc-java/r1rv86/LICENSE.md",
+  "files": [
+    {
+      "name": "bcprov-jdk18on-1.86.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/1.86/bcprov-jdk18on-1.86.jar",
+      "bytes": 7224011,
+      "sha256": "2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f"
+    },
+    {
+      "name": "bcprov-jdk18on-1.86-sources.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/1.86/bcprov-jdk18on-1.86-sources.jar",
+      "bytes": 4909869,
+      "sha256": "34a8b7dcb030a08ddd5356d3d5be962f9299ca5275e1460273186f8fdbe44c34"
+    },
+    {
+      "name": "bcprov-jdk18on-1.86.pom",
+      "url": "https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/1.86/bcprov-jdk18on-1.86.pom",
+      "bytes": 1160,
+      "sha256": "970b70cb75a184639b6fb9ba3c465aca6a4e1a5f3fff4d65ce8574b2fd79ef38"
+    }
+  ],
+  "integrityNotPublisherAuthentication": true,
+  "providerJarUnmodifiedAndNotShaded": true,
+  "fipsComplianceClaimed": false
+}

@@ -11,8 +11,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
 /**
- * Bounded supervision only. There is deliberately no production launcher yet.
- * The package-private launch seam is exercised by a test-only Java worker.
+ * Bounded supervision. SessionWorker supplies the account-free production launcher;
+ * adversarial lifecycle cases use the package-private test-only launch seam.
+ * Neither path constructs an actual account client or authorization/database session.
  */
 public final class SessionSupervisor implements AutoCloseable {
     @FunctionalInterface interface Launcher { Process launch(UUID generation) throws IOException; }

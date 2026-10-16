@@ -5,7 +5,7 @@ import java.io.IOException;
 /** Deliberately carries no raw input, paths, parser exceptions or worker output. */
 public final class SessionException extends IOException {
     public enum Code { PROFILE_INVALID, PROFILE_BUSY, STORAGE_UNSUPPORTED, PROTOCOL_INVALID,
-        START_FAILED, WORKER_FAILED, CLOSE_FAILED, INTERRUPTED }
+        START_FAILED, WORKER_FAILED, CLOSE_FAILED, INTERRUPTED, NATIVE_NOT_BUILT, BUNDLE_INVALID }
 
     private final Code code;
 

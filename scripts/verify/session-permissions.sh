@@ -21,7 +21,8 @@ trap 'rm -rf -- "$stage"' EXIT
 # Relabel only disposable copies, never the installed app/runtime or Maven outputs.
 cp -a "$runtime" "$stage/runtime"
 cp target/telegram-cli.jar "$stage/application.jar"
-mkdir -p "$stage/test/$(dirname "$probe")"
+mkdir -p "$stage/test/$(dirname "$probe")" "$stage/lib"
+cp target/lib/*.jar "$stage/lib/"
 cp "target/test-classes/$probe" "$stage/test/$probe"
 timeout 45s podman run --rm --pull=never --network none --read-only --memory 256m --pids-limit 64 \
     --tmpfs /tmp:rw,nosuid,nodev,size=32m --env TGC_PERMISSION_CONTAINER=1 \

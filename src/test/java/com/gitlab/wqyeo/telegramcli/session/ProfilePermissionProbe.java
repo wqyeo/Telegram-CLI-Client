@@ -34,6 +34,22 @@ public final class ProfilePermissionProbe {
         try (var lease = ProfileStore.acquire(workspace, "default")) {
             if (lease == null) { throw new AssertionError(); }
         }
+        Path config = Files.createTempDirectory(Path.of("/tmp"), "tgc-vault-permissions-",
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        Path vault = config.resolve("default.credentials");
+        Files.createFile(vault, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        Files.write(vault, new byte[CredentialEnvelope.ENVELOPE_BYTES]); // Deliberately invalid synthetic envelope, no key/KDF.
+        var credentials = new CredentialStore(config, workspace);
+        Files.setAttribute(vault, "unix:uid", 1000); vaultRefused(credentials);
+        Files.setAttribute(vault, "unix:uid", 0);
+        Files.setAttribute(config, "unix:uid", 1000); vaultRefused(credentials);
+        Files.setAttribute(config, "unix:uid", 0);
+        try {
+            credentials.open("default", "SYNTHETIC_DO_NOT_PRINT".toCharArray());
+            throw new AssertionError("Invalid synthetic envelope was accepted.");
+        } catch (CredentialException exception) {
+            if (exception.code() != CredentialException.Code.ENVELOPE_INVALID) { throw exception; }
+        }
         Path ancestor = Files.createDirectory(workspace.resolve("shared"));
         Files.setPosixFilePermissions(ancestor, PosixFilePermissions.fromString("rwxrwx---"));
         Path nested = Files.createDirectory(ancestor.resolve("private"),
@@ -46,6 +62,15 @@ public final class ProfilePermissionProbe {
         }
         System.out.println("{\"schemaVersion\":1,\"status\":\"ok\",\"wrongProfileOwnerRefused\":true,"
                 + "\"wrongMetadataOwnerRefused\":true,\"wrongLockOwnerRefused\":true,"
-                + "\"wrongWorkspaceOwnerRefused\":true,\"writableAncestorRefused\":true,\"accountDatabaseCreated\":false}");
+                + "\"wrongWorkspaceOwnerRefused\":true,\"wrongVaultOwnerRefused\":true,\"wrongConfigOwnerRefused\":true,"
+                + "\"writableAncestorRefused\":true,\"accountDatabaseCreated\":false}");
+    }
+    private static void vaultRefused(CredentialStore store) throws Exception {
+        try {
+            store.open("default", "SYNTHETIC_DO_NOT_PRINT".toCharArray());
+            throw new AssertionError("Wrong-owner credential storage was accepted.");
+        } catch (CredentialException exception) {
+            if (exception.code() != CredentialException.Code.STORAGE_INVALID) { throw exception; }
+        }
     }
 }

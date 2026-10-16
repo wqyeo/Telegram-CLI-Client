@@ -94,7 +94,7 @@ public final class ProfileStore {
         }
     }
 
-    private static SecureDirectoryStream<Path> workspace(Path path) throws IOException {
+    static SecureDirectoryStream<Path> workspace(Path path) throws IOException {
         if (!System.getProperty("os.name").equalsIgnoreCase("linux")) { throw new SessionException(STORAGE_UNSUPPORTED); }
         if (path == null || !path.isAbsolute() || !path.equals(path.normalize())) { throw new SessionException(PROFILE_INVALID); }
         int uid = (int) Files.getAttribute(Path.of("/proc/self/status"), "unix:uid");

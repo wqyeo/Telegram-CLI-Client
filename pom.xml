@@ -36,6 +36,7 @@
     <jackson.version>2.22.3</jackson.version>
     <junit.version>5.14.4</junit.version>
     <lanterna.version>3.1.5</lanterna.version>
+    <bouncycastle.version>1.86</bouncycastle.version>
     <tdlib.revision>a94b83d67ab4c8397c6245e541b31a4131ea2f79</tdlib.revision>
   </properties>
   <dependencyManagement>
@@ -61,6 +62,11 @@
       <groupId>com.googlecode.lanterna</groupId>
       <artifactId>lanterna</artifactId>
       <version>${lanterna.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
     </dependency>
     <dependency>
       <groupId>info.picocli</groupId>
@@ -169,8 +175,11 @@
             <goals><goal>shade</goal></goals>
             <configuration>
               <createDependencyReducedPom>false</createDependencyReducedPom>
-              <!-- Keep LGPL Lanterna replaceable instead of embedding it in our JAR. -->
-              <artifactSet><excludes><exclude>com.googlecode.lanterna:lanterna</exclude></excludes></artifactSet>
+              <!-- Keep LGPL Lanterna replaceable and the signed BC provider JAR unmodified. -->
+              <artifactSet><excludes>
+                <exclude>com.googlecode.lanterna:lanterna</exclude>
+                <exclude>org.bouncycastle:bcprov-jdk18on</exclude>
+              </excludes></artifactSet>
               <filters>
                 <filter>
                   <artifact>*:*</artifact>
@@ -194,7 +203,7 @@
                   <mainClass>com.gitlab.wqyeo.telegramcli.Main</mainClass>
                   <manifestEntries>
                     <Multi-Release>true</Multi-Release>
-                    <Class-Path>lib/lanterna-${lanterna.version}.jar</Class-Path>
+                    <Class-Path>lib/lanterna-${lanterna.version}.jar lib/bcprov-jdk18on-${bouncycastle.version}.jar</Class-Path>
                   </manifestEntries>
                 </transformer>
               </transformers>
@@ -208,11 +217,11 @@
         <version>3.11.0</version>
         <executions>
           <execution>
-            <id>replaceable-terminal-library</id>
+            <id>separate-runtime-libraries</id>
             <phase>prepare-package</phase>
             <goals><goal>copy-dependencies</goal></goals>
             <configuration>
-              <includeArtifactIds>lanterna</includeArtifactIds>
+              <includeArtifactIds>lanterna,bcprov-jdk18on</includeArtifactIds>
               <outputDirectory>${project.build.directory}/lib</outputDirectory>
             </configuration>
           </execution>

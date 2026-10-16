@@ -21,24 +21,35 @@ Invoke-Checked -File 'java' -Arguments @('-jar','target/telegram-cli.jar','nativ
 [xml]$Pom = Get-Content pom.xml -Raw
 $Version = $Pom.project.version.Replace('-SNAPSHOT','')
 $Lanterna = $Pom.project.properties.'lanterna.version'
+$Crypto = $Pom.project.properties.'bouncycastle.version'
+$CryptoLock = Get-Content licenses/bouncycastle-source.json -Raw | ConvertFrom-Json
+if ($CryptoLock.version -ne $Crypto) { throw 'Bouncy Castle source version mismatch.' }
 $SourceLock = Get-Content licenses/lanterna-source.json -Raw | ConvertFrom-Json
 if ($SourceLock.version -ne $Lanterna) { throw 'Lanterna source version mismatch.' }
 $InputDirectory = Join-Path $Root 'target/package-input'
 New-Item "$InputDirectory/lib","$InputDirectory/licenses","$InputDirectory/build-provenance" -ItemType Directory -Force | Out-Null
 Copy-Item target/telegram-cli.jar "$InputDirectory/"
-Copy-Item "target/lib/lanterna-$Lanterna.jar" "$InputDirectory/lib/"
+Copy-Item "target/lib/lanterna-$Lanterna.jar","target/lib/bcprov-jdk18on-$Crypto.jar" "$InputDirectory/lib/"
 Copy-Item $Bundle "$InputDirectory/native" -Recurse
 Copy-Item LICENSE,THIRD-PARTY-NOTICES.txt,licenses/*.txt "$InputDirectory/licenses/"
-Copy-Item native/tdlib.lock.json,native/windows/build-settings.json,pom.xml "$InputDirectory/build-provenance/"
+Copy-Item native/tdlib.lock.json,native/windows/build-settings.json,licenses/bouncycastle-source.json,pom.xml "$InputDirectory/build-provenance/"
 foreach ($Classifier in @('jar:sources','pom')) {
     Invoke-Checked -File './mvnw.cmd' -Arguments @('org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy',"-Dartifact=com.googlecode.lanterna:lanterna:${Lanterna}:$Classifier","-DoutputDirectory=$InputDirectory/licenses")
+    Invoke-Checked -File './mvnw.cmd' -Arguments @('org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy',"-Dartifact=org.bouncycastle:bcprov-jdk18on:${Crypto}:$Classifier","-DoutputDirectory=$InputDirectory/licenses")
+}
+foreach ($Entry in $CryptoLock.files) {
+    $Base = if ($Entry.name -eq "bcprov-jdk18on-$Crypto.jar") { "$InputDirectory/lib" } else { "$InputDirectory/licenses" }
+    $File = Join-Path $Base $Entry.name
+    if ((Get-Item $File).Length -ne $Entry.bytes -or (Get-FileHash $File -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Entry.sha256) {
+        throw 'Bouncy Castle artifact integrity mismatch.'
+    }
 }
 $SourceArchive = Join-Path $Root 'native-build/downloads/lanterna-3.1.5-source.tar.gz'
 New-Item (Split-Path $SourceArchive) -ItemType Directory -Force | Out-Null
 if (-not (Test-Path $SourceArchive)) { Invoke-WebRequest $SourceLock.url -OutFile $SourceArchive }
 if ((Get-FileHash $SourceArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $SourceLock.sha256) { throw 'Lanterna source checksum mismatch.' }
 Copy-Item $SourceArchive "$InputDirectory/licenses/lanterna-source.tar.gz"
-$Modules = (& jdeps --multi-release 25 --ignore-missing-deps --print-module-deps target/telegram-cli.jar "target/lib/lanterna-$Lanterna.jar" "$Bundle/tdlib-java.jar") -join ''
+$Modules = (& jdeps --multi-release 25 --ignore-missing-deps --print-module-deps target/telegram-cli.jar "target/lib/lanterna-$Lanterna.jar" "target/lib/bcprov-jdk18on-$Crypto.jar" "$Bundle/tdlib-java.jar") -join ''
 if ($LASTEXITCODE -ne 0) { throw 'jdeps failed.' }
 $Modules | Set-Content "$InputDirectory/build-provenance/jdeps-modules.txt" -Encoding utf8NoBOM
 Invoke-Checked -File 'jlink' -Arguments @('--add-modules',"$Modules,jdk.crypto.ec",'--output','target/runtime','--strip-debug','--no-man-pages','--no-header-files','--compress=zip-6')

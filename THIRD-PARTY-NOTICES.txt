@@ -4,6 +4,12 @@ This project is not affiliated with or endorsed by Telegram.
 Java dependencies:
 - Picocli 4.7.7: Apache License 2.0, Remko Popma and contributors.
 - Jackson 2.22.3: Apache License 2.0, FasterXML and contributors.
+- Bouncy Castle bcprov-jdk18on 1.86: MIT/Bouncy Castle Licence,
+  Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc.
+  Pure-Java Argon2id derivation only; no global JCA provider registration or FIPS claim.
+  The original signed provider JAR stays separate and unmodified (not shaded).
+  License: licenses/Bouncy-Castle.txt. Exact binary/source/POM integrity records:
+  licenses/bouncycastle-source.json; corresponding files accompany new app images.
 - Lanterna 3.1.5: LGPL 3.0 or later, Martin Berglund and contributors.
   Lanterna is distributed as a separate, replaceable lib/lanterna-3.1.5.jar.
   Its exact Maven Central source JAR and GPL/LGPL texts accompany app images.
@@ -30,6 +36,7 @@ https://gitlab.com/wqyeo/telegram-cli
 https://gitlab.com/wqyeo/telegram-cli/-/wikis/Development
 https://repo.maven.apache.org/maven2/com/googlecode/lanterna/lanterna/3.1.5/
 https://github.com/tdlib/td
+https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/1.86/
 
 Distribution SHA-256 manifests detect accidental changes; they are not signatures.
 No native or Windows build is claimed bit-for-bit reproducible. Windows recipes
