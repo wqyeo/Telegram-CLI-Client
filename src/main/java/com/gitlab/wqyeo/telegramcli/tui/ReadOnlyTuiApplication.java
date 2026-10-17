@@ -2,6 +2,7 @@ package com.gitlab.wqyeo.telegramcli.tui;
 
 import static com.gitlab.wqyeo.telegramcli.session.bridge.BridgeData.*;
 import com.gitlab.wqyeo.telegramcli.application.SyntheticReadOnlySession;
+import com.gitlab.wqyeo.telegramcli.application.ReadOnlyPreviewSession;
 import com.gitlab.wqyeo.telegramcli.session.bridge.*;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.TerminalScreen;
@@ -18,7 +19,7 @@ public final class ReadOnlyTuiApplication {
         }
     }
     /** Owns terminal/session. The hook injects fixture events/keys only; no genuine Console input. */
-    public int run(Terminal terminal, SyntheticReadOnlySession session, Runnable frameHook) throws Exception {
+    public int run(Terminal terminal, ReadOnlyPreviewSession session, Runnable frameHook) throws Exception {
         try (terminal; session) {
             if (!guide(terminal, session, frameHook)) { return 0; }
             var renderer = new ReadOnlyRenderer();
@@ -39,7 +40,7 @@ public final class ReadOnlyTuiApplication {
             } finally { renderer.purge(); }
         }
     }
-    private boolean guide(Terminal terminal, SyntheticReadOnlySession session, Runnable frameHook) throws Exception {
+    private boolean guide(Terminal terminal, ReadOnlyPreviewSession session, Runnable frameHook) throws Exception {
         String rendered = null, notice = "";
         while (!viewReady(session.latest()) && !session.latest().disposed()) {
             var state = session.tick();
@@ -59,7 +60,7 @@ public final class ReadOnlyTuiApplication {
                 var key = terminal.pollInput(); if (key == null) { break; }
                 if (ReadOnlyController.quits(key)) { return false; }
                 if (key.getKeyType() == KeyType.Enter) {
-                    if (state.auth() != null && state.auth().step().input()) {
+                    if (state.auth() != null && state.auth().step().input() && state.pendingRequests() == 0) {
                         try { session.advanceAuthorization(); notice = ""; }
                         catch (BridgeException failure) {
                             if (failure.code() != BridgeException.Code.TIMEOUT) { throw failure; }

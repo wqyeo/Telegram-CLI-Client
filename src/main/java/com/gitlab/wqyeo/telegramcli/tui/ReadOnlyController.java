@@ -1,6 +1,6 @@
 package com.gitlab.wqyeo.telegramcli.tui;
 
-import com.gitlab.wqyeo.telegramcli.application.SyntheticReadOnlySession;
+import com.gitlab.wqyeo.telegramcli.application.ReadOnlyPreviewSession;
 import com.gitlab.wqyeo.telegramcli.session.bridge.*;
 import static com.gitlab.wqyeo.telegramcli.session.bridge.BridgeData.*;
 import com.googlecode.lanterna.input.*;
@@ -9,14 +9,16 @@ import java.util.ArrayDeque;
 /** Input/render thread owner. Exactly two focus targets; no draft, composer or mutation callback. */
 public final class ReadOnlyController {
     public enum Focus { CHATS, HISTORY }
-    private final SyntheticReadOnlySession session;
+    private final ReadOnlyPreviewSession session;
     private final ArrayDeque<Long> newer = new ArrayDeque<>();
+    private record Navigation(long cursor, boolean backwards, long request) {}
+    private Navigation navigation;
     private long selected, cursor;
     private Focus focus = Focus.CHATS;
     private int scroll;
     private boolean help, running = true;
     private String action = "Synthetic fixtures only. No Telegram connection.";
-    public ReadOnlyController(SyntheticReadOnlySession session) { this.session = session; sync(); }
+    public ReadOnlyController(ReadOnlyPreviewSession session) { this.session = session; sync(); }
     public BridgeCoordinator.Snapshot state() { return session.latest(); }
     public Focus focus() { return focus; }
     public boolean running() { return running; }
@@ -32,7 +34,16 @@ public final class ReadOnlyController {
     public boolean savedSelected() { return state().identity() != null && selected == state().identity().savedChatId(); }
     public void clampScroll(int maximum) { scroll = Math.max(0, Math.min(scroll, maximum)); }
     public void sync() {
-        if (state().identity() == null) { selected = 0; cursor = 0; newer.clear(); scroll = 0; return; }
+        if (state().identity() == null) { selected = 0; cursor = 0; newer.clear(); navigation = null; scroll = 0; return; }
+        if (navigation != null && state().pendingRequests() == 0) {
+            if (state().acceptedSavedRequest() == navigation.request()) {
+                if (navigation.backwards()) { newer.removeLast(); }
+                else { if (newer.size() == 10) { newer.removeFirst(); } newer.addLast(cursor); }
+                cursor = navigation.cursor(); scroll = 0;
+                action = navigation.backwards() ? "Newer synthetic Saved page." : "Older synthetic Saved page. B newer; R newest.";
+            }
+            navigation = null;
+        }
         if (selectedChat() == null) {
             long saved = state().identity().savedChatId();
             selected = state().chats().stream().anyMatch(value -> value.id() == saved) ? saved
@@ -76,7 +87,7 @@ public final class ReadOnlyController {
                     case 'n' -> next();
                     case 'b' -> previous();
                     case 'r' -> {
-                        if (state().connection() != Phase.READY) { return; }
+                        if (state().connection() != Phase.READY || state().pendingRequests() != 0) { return; }
                         session.refresh(); cursor = 0; newer.clear(); scroll = 0; sync(); action = "Synthetic view refreshed. Nothing sent.";
                     }
                     default -> { /* Typed text is never collected, edited or sent. */ }
@@ -91,7 +102,7 @@ public final class ReadOnlyController {
         selected = state().chats().get(index).id(); scroll = 0;
     }
     private void next() throws BridgeException {
-        if (state().identity() == null) { return; }
+        if (state().identity() == null || state().pendingRequests() != 0) { return; }
         if (focus == Focus.CHATS) {
             action = session.moreChats() ? "More fixture chats retained (maximum 100)." : "End of bounded fixture chat list (maximum 100).";
             sync(); return;
@@ -99,16 +110,11 @@ public final class ReadOnlyController {
         if (!savedSelected()) { action = "Only Saved Messages text can be viewed in this preview."; return; }
         long next = state().nextMessages();
         if (next == 0) { action = "End of bounded fixture Saved Messages (maximum 100)."; return; }
-        session.savedPage(next);
-        if (state().lastError() == null) {
-            if (newer.size() == 10) { newer.removeFirst(); }
-            newer.addLast(cursor); cursor = next; scroll = 0; action = "Older synthetic Saved page. B newer; R newest.";
-        }
+        navigation = new Navigation(next, false, session.savedPage(next)); sync();
     }
     private void previous() throws BridgeException {
-        if (!savedSelected() || focus != Focus.HISTORY) { return; }
+        if (!savedSelected() || focus != Focus.HISTORY || state().pendingRequests() != 0) { return; }
         if (newer.isEmpty()) { action = "Newest requested page already shown. N older."; return; }
-        long previous = newer.peekLast(); session.savedPage(previous);
-        if (state().lastError() == null) { newer.removeLast(); cursor = previous; scroll = 0; action = "Newer synthetic Saved page."; }
+        long previous = newer.peekLast(); navigation = new Navigation(previous, true, session.savedPage(previous)); sync();
     }
 }

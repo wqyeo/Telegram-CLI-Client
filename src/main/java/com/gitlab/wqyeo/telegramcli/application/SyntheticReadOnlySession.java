@@ -11,7 +11,7 @@ import java.util.function.LongSupplier;
  * Authorization advances only on explicit actions and uses public fixture bytes, never caller input.
  * In-memory wire round trips are NOT native-transport, account authorization or engine-close proof.
  */
-public final class SyntheticReadOnlySession implements AutoCloseable {
+public final class SyntheticReadOnlySession implements ReadOnlyPreviewSession {
     public enum Scenario { FULL, RETRY, UNSUPPORTED }
     public record Activity(int authAttempts, int readRequests, int controlRequests) {}
     private final BridgeCoordinator coordinator;
@@ -51,8 +51,9 @@ public final class SyntheticReadOnlySession implements AutoCloseable {
         long next = latest().nextChats(); if (next == 0) { return false; } chats(next); return true;
     }
     /** Saved-only page; no arbitrary chat ID, SDK function, send, edit, delete or media operation. */
-    public synchronized void savedPage(long beforeMessageId) throws BridgeException {
-        open(); exchange(() -> peer.receive(coordinator.request(Target.SAVED_MESSAGES, beforeMessageId, MESSAGE_PAGE)));
+    public synchronized long savedPage(long beforeMessageId) throws BridgeException {
+        open(); Frame frame = coordinator.request(Target.SAVED_MESSAGES, beforeMessageId, MESSAGE_PAGE);
+        exchange(() -> peer.receive(frame)); return frame.requestId();
     }
     public synchronized boolean olderSavedPage() throws BridgeException {
         open(); if (!initialized) { throw state(); }

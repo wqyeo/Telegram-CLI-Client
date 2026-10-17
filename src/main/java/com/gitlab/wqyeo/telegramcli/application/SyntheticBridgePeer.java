@@ -43,6 +43,15 @@ final class SyntheticBridgePeer implements AutoCloseable {
     void start() throws BridgeException { prompt(Step.PHONE, 0); }
     static byte[] fixture(Step step) { return ("PUBLIC_SYNTHETIC_" + step.name()).getBytes(StandardCharsets.US_ASCII); }
 
+    /** Test child private channel: validate current step/token/next request before reading its bounded body. */
+    void authenticateFrom(InputStream input) throws BridgeException {
+        open();
+        if (auth == null || !auth.step().input()) { throw invalid(); }
+        try (var submission = AuthTransfer.read(input, generation, Math.addExact(receivedRequest, 1), auth.token(), auth.step())) {
+            if (submission == null) { throw invalid(); }
+            authenticate(submission);
+        }
+    }
     void authenticate(AuthSubmission submission) throws BridgeException {
         open();
         if (auth == null || !auth.step().input() || submission.requestId() <= receivedRequest) { throw invalid(); }

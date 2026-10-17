@@ -13,7 +13,7 @@ public final class BridgeCoordinator implements AutoCloseable {
     private static final long REQUEST_NANOS = Duration.ofSeconds(10).toNanos();
     private static final long AUTH_REPLY_NANOS = Duration.ofSeconds(30).toNanos();
     public record Snapshot(UUID generation, long sequence, Auth auth, Identity identity, Phase connection,
-                           List<Chat> chats, List<Message> messages, long nextChats, long nextMessages,
+                           List<Chat> chats, List<Message> messages, long nextChats, long nextMessages, long acceptedSavedRequest,
                            int retainedMessages, int pendingRequests, int retryAfterSeconds, BridgeData.Error lastError,
                            BridgeException.Code failure, boolean disposed) {
         public Snapshot { chats = List.copyOf(chats); messages = List.copyOf(messages); }
@@ -29,7 +29,7 @@ public final class BridgeCoordinator implements AutoCloseable {
     private final LinkedHashMap<Long, Chat> chats = new LinkedHashMap<>();
     private final LinkedHashMap<Long, Message> messages = new LinkedHashMap<>();
     private final List<Long> active = new ArrayList<>();
-    private long incoming, outgoing, issued, authRequest, nextChats, nextMessages, authStarted, retryStarted, retryNanos;
+    private long incoming, outgoing, issued, authRequest, nextChats, nextMessages, acceptedSavedRequest, authStarted, retryStarted, retryNanos;
     private Auth auth;
     private Identity identity;
     private Phase connection = Phase.OFFLINE;
@@ -146,7 +146,7 @@ public final class BridgeCoordinator implements AutoCloseable {
                     else { messages.remove(message.id()); }
                 }
                 while (messages.size() > MAX_MESSAGES) { messages.pollFirstEntry(); }
-                nextMessages = value.nextCursor(); lastError = null;
+                nextMessages = value.nextCursor(); acceptedSavedRequest = frame.requestId(); lastError = null;
             }
             case Changed value -> {
                 if (frame.requestId() != 0) { throw BridgeData.invalid(); }
@@ -220,12 +220,12 @@ public final class BridgeCoordinator implements AutoCloseable {
         checkOpen(); if (auth == null || auth.step() != Step.READY || identity == null) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
     }
     private void checkOpen() throws BridgeException { if (disposed) { throw new BridgeException(BridgeException.Code.STATE_INVALID); } }
-    private void clearData() { pending.clear(); chats.clear(); messages.clear(); active.clear(); nextChats = 0; nextMessages = 0; }
+    private void clearData() { pending.clear(); chats.clear(); messages.clear(); active.clear(); nextChats = 0; nextMessages = 0; acceptedSavedRequest = 0; }
     private void publish() {
         var visible = active.stream().map(messages::get).filter(Objects::nonNull)
                 .sorted(Comparator.comparingLong(Message::date).thenComparingLong(Message::id)).toList();
         snapshot = new Snapshot(generation, incoming, auth, identity, connection, List.copyOf(chats.values()), visible,
-                nextChats, nextMessages, messages.size(), pending.size() + (authRequest == 0 ? 0 : 1), retryRemaining(), lastError, failure, disposed);
+                nextChats, nextMessages, acceptedSavedRequest, messages.size(), pending.size() + (authRequest == 0 ? 0 : 1), retryRemaining(), lastError, failure, disposed);
     }
     private BridgeException fail(BridgeException.Code code) { failure = code; close(); return new BridgeException(code); }
     @Override public synchronized void close() {
