@@ -1,0 +1,16 @@
+{
+  "revision": "a94b83d67ab4c8397c6245e541b31a4131ea2f79",
+  "builderImageId": "d2f81a0b1e06e118d47aaa00a19708cc98fe5ba2d2989bec12239518558cfb7a",
+  "scope": "B1d admission-record/filesystem primitives only; no TDLib database execution or engine-wide G1",
+  "referenceHashes": {
+    "td/telegram/TdDb.cpp": "5aa709097e6988c22c652b6fcc8a76c1e15dd447c68d584091de9d00faec6762",
+    "td/telegram/TdDb.h": "67d0cae6fdd0e56c9f5094fb5c06eee3471a6fc3a0d8430f9ed5f85961df6bad"
+  },
+  "upstreamPatched": false,
+  "tdlibLinkedOrExecuted": false,
+  "recordVersion": 1,
+  "recordHeaderBytes": 112,
+  "sealedRecordBytes": 120,
+  "fixtureSchemaIsPlaceholder": true,
+  "fixtureComponentsAreNotDatabases": true
+}

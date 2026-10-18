@@ -1,0 +1,305 @@
+--- a/tddb/td/db/binlog/Binlog.cpp
++++ b/tddb/td/db/binlog/Binlog.cpp
+@@ -26,6 +26,10 @@
+ #include "td/utils/tl_helpers.h"
+ #include "td/utils/tl_parsers.h"
+ 
++// Telegram-CLI experimental Linux G1 existing-store gate.
++#include <cerrno>
++#include <sys/stat.h>
++
+ namespace td {
+ namespace detail {
+ struct AesCtrEncryptionEvent {
+@@ -182,47 +186,49 @@
+   return std::move(fd);
+ }
+ 
+-Status Binlog::init(string path, const Callback &callback, DbKey db_key, DbKey old_db_key, int32 dummy,
++Status Binlog::init(string path, const Callback &callback, DbKey db_key, DbKey /*old_db_key*/, int32 dummy,
+                     const Callback &debug_callback) {
+   close().ignore();
+ 
++  // No NEW capability in this component. Refuse missing/empty/nonregular mains,
++  // all replacement remnants (including dangling links), and uncertain stats.
++  struct ::stat main_stat;
++  if (::lstat(path.c_str(), &main_stat) != 0 || !S_ISREG(main_stat.st_mode) || main_stat.st_size <= 0) {
++    return Status::Error("TGCLI_G1_EXISTING_BINLOG_REQUIRED");
++  }
++  string replacement = path + ".new";
++  struct ::stat replacement_stat;
++  if (::lstat(replacement.c_str(), &replacement_stat) == 0 || errno != ENOENT) {
++    return Status::Error("TGCLI_G1_BINLOG_REPLACEMENT_REFUSED");
++  }
++  // The legacy per-record debug callback can expose unvalidated prefixes.
++  if (debug_callback) {
++    return Status::Error("TGCLI_G1_BINLOG_DEBUG_CALLBACK_REFUSED");
++  }
++
+   db_key_ = std::move(db_key);
+-  old_db_key_ = std::move(old_db_key);
+-
++  old_db_key_ = DbKey::empty();
++  db_key_used_ = false;
++  encryption_type_ = EncryptionType::None;
++  aes_ctr_key_salt_.clear();
++  pending_events_.clear();
++  binlog_reader_ptr_ = nullptr;
++  fd_events_ = 0;
+   processor_ = make_unique<detail::BinlogEventsProcessor>();
+-  // Turn off BinlogEventsBuffer
+-  // events_buffer_ = make_unique<detail::BinlogEventsBuffer>();
+-
+-  // try to restore binlog from regenerated version
+-  if (stat(path).is_error()) {
+-    rename(PSLICE() << path << ".new", path).ignore();
+-  }
+-
+   info_ = BinlogInfo();
+-  info_.was_created = stat(path).is_error();
+-
+-  TRY_RESULT(fd, open_binlog(path, FileFd::Flags::Read | FileFd::Flags::Write | FileFd::Flags::Create));
++
++  TRY_RESULT(fd, open_binlog(path, FileFd::Flags::Read | FileFd::Flags::Write));
+   fd_ = BufferedFdBase<FileFd>(std::move(fd));
+   fd_size_ = 0;
+   path_ = std::move(path);
+ 
+   auto status = load_binlog(callback, debug_callback);
+   if (status.is_error()) {
+-    close().ignore();
++    close().ignore();  // Load state has no output writes/truncation to flush.
+     return status;
+   }
+   info_.last_event_id = processor_->last_event_id();
+   last_event_id_ = processor_->last_event_id();
+-  if (info_.wrong_password) {
+-    close().ignore();
+-    return Status::Error(static_cast<int>(Error::WrongPassword), "Wrong password");
+-  }
+-
+-  if ((!db_key_.is_empty() && !db_key_used_) || (db_key_.is_empty() && encryption_type_ != EncryptionType::None)) {
+-    aes_ctr_key_salt_ = string();
+-    do_reindex();
+-  }
+-
+   info_.is_opened = true;
+   return Status::OK();
+ }
+@@ -233,7 +239,7 @@
+   }
+ 
+   if (!events_buffer_) {
+-    do_add_event(std::move(event));
++    do_add_event(std::move(event)).ensure();
+   } else {
+     events_buffer_->add_event(std::move(event));
+   }
+@@ -264,22 +270,23 @@
+   }
+   CHECK(!in_flush_events_buffer_);
+   in_flush_events_buffer_ = true;
+-  events_buffer_->flush([&](BinlogEvent &&event) { this->do_add_event(std::move(event)); });
++  events_buffer_->flush([&](BinlogEvent &&event) { this->do_add_event(std::move(event)).ensure(); });
+   in_flush_events_buffer_ = false;
+   return 0;
+ }
+ 
+-void Binlog::do_add_event(BinlogEvent &&event) {
++Status Binlog::do_add_event(BinlogEvent &&event) {
+   if (event.flags_ & BinlogEvent::Flags::Partial) {
+     event.flags_ &= ~BinlogEvent::Flags::Partial;
+     pending_events_.emplace_back(std::move(event));
+   } else {
+     for (auto &pending_event : pending_events_) {
+-      do_event(std::move(pending_event));
++      TRY_STATUS(do_event(std::move(pending_event)));
+     }
+     pending_events_.clear();
+-    do_event(std::move(event));
+-  }
++    TRY_STATUS(do_event(std::move(event)));
++  }
++  return Status::OK();
+ }
+ 
+ Status Binlog::close(bool need_sync) {
+@@ -324,7 +331,7 @@
+   return Status::OK();
+ }
+ 
+-void Binlog::do_event(BinlogEvent &&event) {
++Status Binlog::do_event(BinlogEvent &&event) {
+   auto event_size = event.raw_event_.size();
+ 
+   if (state_ == State::Run || state_ == State::Reindex) {
+@@ -344,7 +351,10 @@
+       TlParser event_parser(event.get_data());
+       encryption_event.parse(event_parser);
+       event_parser.fetch_end();
+-      LOG_CHECK(event_parser.get_error() == nullptr) << event_parser.get_status();
++      if (event_parser.get_error() != nullptr || encryption_event.key_salt_.size() < 16 ||
++          encryption_event.iv_.size() != 16 || encryption_event.key_hash_.size() != 32) {
++        return Status::Error("TGCLI_G1_BINLOG_ENCRYPTION_HEADER_REFUSED");
++      }
+ 
+       string key;
+       if (aes_ctr_key_salt_ == encryption_event.key_salt_) {
+@@ -354,18 +364,10 @@
+       }
+ 
+       if (detail::AesCtrEncryptionEvent::generate_hash(key) != encryption_event.key_hash_) {
+-        CHECK(state_ == State::Load);
+-        if (!old_db_key_.is_empty()) {
+-          key = encryption_event.generate_key(old_db_key_);
+-          if (detail::AesCtrEncryptionEvent::generate_hash(key) != encryption_event.key_hash_) {
+-            info_.wrong_password = true;
+-          }
+-        } else {
+-          info_.wrong_password = true;
+-        }
+-      } else {
+-        db_key_used_ = true;
+-      }
++        info_.wrong_password = true;
++        return Status::Error(static_cast<int>(Error::WrongPassword), "TGCLI_G1_BINLOG_KEY_REFUSED");
++      }
++      db_key_used_ = true;
+ 
+       encryption_type_ = EncryptionType::AesCtr;
+ 
+@@ -387,25 +389,14 @@
+   if (state_ != State::Reindex) {
+     auto status = processor_->add_event(std::move(event));
+     if (status.is_error()) {
+-      auto old_size = detail::file_size(path_);
+-      auto data = debug_get_binlog_data(fd_size_, old_size);
+-      if (state_ == State::Load) {
+-        fd_.seek(fd_size_).ensure();
+-        fd_.truncate_to_current_position(fd_size_).ensure();
+-
+-        if (data.empty()) {
+-          return;
+-        }
+-      }
+-
+-      LOG(FATAL) << "Truncate binlog \"" << path_ << "\" from size " << old_size << " to size " << fd_size_
+-                 << " in state " << static_cast<int32>(state_) << " due to error: " << status << " after reading "
+-                 << data;
++      // No seek/truncate, hex dump, or recovery continuation on a processor error.
++      return Status::Error("TGCLI_G1_BINLOG_EVENT_SEQUENCE_REFUSED");
+     }
+   }
+ 
+   fd_events_++;
+   fd_size_ += event_size;
++  return Status::OK();
+ }
+ 
+ void Binlog::sync(const char *source) {
+@@ -505,7 +496,7 @@
+   }
+ }
+ 
+-Status Binlog::load_binlog(const Callback &callback, const Callback &debug_callback) {
++Status Binlog::load_binlog(const Callback &callback, const Callback & /*debug_callback*/) {
+   state_ = State::Load;
+ 
+   buffer_writer_ = ChainBufferWriter();
+@@ -522,31 +513,11 @@
+     BinlogEvent event;
+     auto r_need_size = reader.read_next(&event);
+     if (r_need_size.is_error()) {
+-      if (r_need_size.error().code() == -2) {
+-        auto old_size = detail::file_size(path_);
+-        auto offset = reader.offset();
+-        auto data = debug_get_binlog_data(offset, old_size);
+-        fd_.seek(offset).ensure();
+-        fd_.truncate_to_current_position(offset).ensure();
+-        if (data.empty()) {
+-          break;
+-        }
+-        LOG(FATAL) << "Truncate binlog \"" << path_ << "\" from size " << old_size << " to size " << offset
+-                   << " due to error: " << r_need_size.error() << " after reading " << data;
+-      }
+-      LOG(ERROR) << r_need_size.error();
+-      break;
++      return Status::Error("TGCLI_G1_BINLOG_RECORD_REFUSED");
+     }
+     auto need_size = r_need_size.move_as_ok();
+-    // LOG(ERROR) << "Need size = " << need_size;
+     if (need_size == 0) {
+-      if (debug_callback) {
+-        debug_callback(event);
+-      }
+-      do_add_event(std::move(event));
+-      if (info_.wrong_password) {
+-        return Status::OK();
+-      }
++      TRY_STATUS(do_add_event(std::move(event)));
+     } else {
+       TRY_STATUS(fd_.flush_read(max(need_size, static_cast<size_t>(4096))));
+       buffer_reader_.sync_with_writer();
+@@ -560,22 +531,20 @@
+   }
+ 
+   auto offset = processor_->offset();
+-  CHECK(offset >= 0);
++  TRY_RESULT(fd_size, fd_.get_size());
++  // Validate the complete committed record stream and requested format BEFORE
++  // publishing any replay event. Refuse incomplete transactions/tails, no repair.
++  if (offset < 0 || offset != fd_size || fd_size_ != offset || !pending_events_.empty()) {
++    return Status::Error("TGCLI_G1_BINLOG_INCOMPLETE_REFUSED");
++  }
++  if ((!db_key_.is_empty() && !db_key_used_) || (db_key_.is_empty() && encryption_type_ != EncryptionType::None)) {
++    return Status::Error("TGCLI_G1_BINLOG_FORMAT_CHANGE_REFUSED");
++  }
+   processor_->for_each([&](BinlogEvent &event) {
+-    VLOG(binlog) << "Replay binlog event: " << event.public_to_string();
+     if (callback) {
+       callback(event);
+     }
+   });
+-
+-  TRY_RESULT(fd_size, fd_.get_size());
+-  if (offset != fd_size) {
+-    LOG(ERROR) << "Truncate " << tag("path", path_) << tag("old_size", fd_size) << tag("new_size", offset);
+-    fd_.seek(offset).ensure();
+-    fd_.truncate_to_current_position(offset).ensure();
+-    db_key_used_ = false;  // force reindex
+-  }
+-  LOG_CHECK(fd_size_ == offset) << fd_size << " " << fd_size_ << " " << offset;
+   binlog_reader_ptr_ = nullptr;
+   state_ = State::Run;
+ 
+@@ -627,7 +596,7 @@
+ 
+   do_event(BinlogEvent(
+       BinlogEvent::create_raw(0, BinlogEvent::ServiceTypes::AesCtrEncryption, 0, create_default_storer(event)),
+-      BinlogDebugInfo{__FILE__, __LINE__}));
++      BinlogDebugInfo{__FILE__, __LINE__})).ensure();
+ }
+ 
+ void Binlog::do_reindex() {
+@@ -663,7 +632,7 @@
+   fd_events_ = 0;
+   reset_encryption();
+   processor_->for_each([&](BinlogEvent &event) {
+-    do_event(std::move(event));  // NB: no move is actually happens
++    do_event(std::move(event)).ensure();  // NB: no move is actually happens
+   });
+   {
+     flush("do_reindex");
+--- a/tddb/td/db/binlog/Binlog.h
++++ b/tddb/td/db/binlog/Binlog.h
+@@ -167,8 +167,8 @@
+ 
+   static Result<FileFd> open_binlog(const string &path, int32 flags);
+   size_t flush_events_buffer(bool force);
+-  void do_add_event(BinlogEvent &&event);
+-  void do_event(BinlogEvent &&event);
++  Status do_add_event(BinlogEvent &&event) TD_WARN_UNUSED_RESULT;
++  Status do_event(BinlogEvent &&event) TD_WARN_UNUSED_RESULT;
+   Status load_binlog(const Callback &callback, const Callback &debug_callback = Callback()) TD_WARN_UNUSED_RESULT;
+   void do_reindex();
+ 

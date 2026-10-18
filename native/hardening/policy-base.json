@@ -1,0 +1,22 @@
+{
+  "revision": "a94b83d67ab4c8397c6245e541b31a4131ea2f79",
+  "builderImageId": "d2f81a0b1e06e118d47aaa00a19708cc98fe5ba2d2989bec12239518558cfb7a",
+  "scope": "B1f filesystem-bound trusted expected binlog-only policy and raw32 key gate; cumulative B1e regressions; not TdDb/account or engine G1",
+  "sourceHashes": {
+    "tddb/td/db/binlog/Binlog.cpp": "45974366e09f2f9b3cb79b99d29b296ce12a4e0a03343bc68b291e96fdfd6a90",
+    "tddb/td/db/binlog/Binlog.h": "49d96a7839e54be46f5b43800fc12e6cbc3a9cf675a578474900860f7238139e"
+  },
+  "basePatchSha256": "2fb5c5caa744e4e398b2a718ef2014e5b82fa6c66cee55d8ba71cb6c10fa4fcc",
+  "maintenancePatchSha256": "9870eae3f971035f81399df4a79dcb8863cb609b291b68030e0489f726e7dbdf",
+  "newPatchSha256": "acddad1cc9c33b7e0475e943749282de7eb3ab3ea843d90d16f4c143b08daba7",
+  "referenceHashes": {
+    "tdutils/td/utils/port/FileFd.cpp": "0cff608d0832f52ae970503a20a710c2e8cabd785f569489fe1a9f5a570cefa7",
+    "tdutils/td/utils/port/path.cpp": "0cadb09d4308a235e91e8b8fb5373b3546a9409b418bff99f297399291cf12a5",
+    "tdutils/td/utils/port/FileFd.h": "4dd8dc1c929ce9dbad9a69e139ac25ca06c7fe5677197fcd75dcf662e244ce1b",
+    "tdutils/td/utils/port/detail/NativeFd.h": "c3e090f239e1a7e28710c52da88ff3529eaa6126fedef8413c345cd78ab65c8d",
+    "tddb/td/db/DbKey.h": "d5575b099c87cc557574031fec730a48b312f79bc838487a807ccc1df0058186",
+    "tddb/td/db/binlog/BinlogEvent.h": "0e9ffbcbc7ddc092c368874dc278b83ac2fab35523b1a9d229c6631e68480437",
+    "tdutils/td/utils/crypto.h": "6d94aad728c2aa43aa664d09299e94d3810c6c86fcbbb1823045a5aeb741eff1",
+    "td/telegram/TdDb.cpp": "5aa709097e6988c22c652b6fcc8a76c1e15dd447c68d584091de9d00faec6762"
+  }
+}

@@ -1,0 +1,114 @@
+--- a/tddb/td/db/binlog/Binlog.cpp
++++ b/tddb/td/db/binlog/Binlog.cpp
+@@ -5,6 +5,7 @@
+ // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
+ //
+ #include "td/db/binlog/Binlog.h"
++#include "td/db/G1StoreAdmission.h"
+ 
+ #include "td/db/binlog/detail/BinlogEventsBuffer.h"
+ #include "td/db/binlog/detail/BinlogEventsProcessor.h"
+@@ -186,6 +187,78 @@
+   return std::move(fd);
+ }
+ 
++Status Binlog::create_new_encrypted(telegram_cli::native_g1::NewReservation &reservation, DbKey db_key) {
++  namespace g1 = telegram_cli::native_g1;
++  if (!reservation.begin_formatting()) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_CAPABILITY_REFUSED");
++  }
++  auto failure_guard = ScopeExit() + [&] { reservation.fail_formatting(); };
++  const auto &config = reservation.configuration();
++  if ((config.flags & (g1::FileDatabase | g1::ChatDatabase | g1::MessageDatabase)) != 0 ||
++      db_key.is_empty() || db_key.data().size() != 32) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_CONFIGURATION_REFUSED");
++  }
++  // Derive the sole main name from immutable reserved configuration, never a
++  // caller-supplied path. The live reservation holds this directory until all
++  // temporary Binlog instances below have closed. Nothing escapes holding it.
++  const char *name = (config.flags & g1::TestDc) ? "td_test.binlog" : "td.binlog";
++  string path = PSTRING() << "/proc/self/fd/" << reservation.root_fd() << "/" << name;
++  auto r_fd = open_binlog(path, FileFd::Flags::Read | FileFd::Flags::Write | FileFd::Flags::CreateNew);
++  if (r_fd.is_error()) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_CREATE_REFUSED");
++  }
++  auto fd = r_fd.move_as_ok();
++  auto unlock_guard = ScopeExit() + [&] { fd.lock(FileFd::LockFlags::Unlock, path, 1).ignore(); };
++  struct ::stat opened{}, linked{};
++  if (::fstat(fd.get_native_fd().fd(), &opened) != 0 || !g1::detail::private_file(opened) || opened.st_size != 0 ||
++      ::fstatat(reservation.root_fd(), name, &linked, AT_SYMLINK_NOFOLLOW) != 0 ||
++      !g1::detail::private_file(linked) || !g1::detail::same_inode(opened, linked)) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_FILE_REFUSED");
++  }
++  // Use the pinned event/KDF/CRC serializer to write ONLY the encryption service
++  // header to this exclusive new main. No replay, reindex or replacement rename.
++  detail::AesCtrEncryptionEvent encryption;
++  encryption.key_salt_.resize(detail::AesCtrEncryptionEvent::default_salt_size());
++  Random::secure_bytes(encryption.key_salt_);
++  encryption.iv_.resize(detail::AesCtrEncryptionEvent::iv_size());
++  Random::secure_bytes(encryption.iv_);
++  encryption.key_hash_ = detail::AesCtrEncryptionEvent::generate_hash(encryption.generate_key(db_key));
++  auto event = BinlogEvent::create_raw(0, BinlogEvent::ServiceTypes::AesCtrEncryption, 0,
++                                      create_default_storer(encryption));
++  auto bytes = event.as_slice();
++  while (!bytes.empty()) {
++    auto written = fd.write(bytes);
++    if (written.is_error() || written.ok() == 0) {
++      return Status::Error("TGCLI_G1_BINLOG_NEW_WRITE_REFUSED");
++    }
++    bytes.remove_prefix(written.ok());
++  }
++  if (fd.sync().is_error()) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_SYNC_REFUSED");
++  }
++  unlock_guard.dismiss();
++  if (fd.lock(FileFd::LockFlags::Unlock, path, 1).is_error()) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_UNLOCK_REFUSED");
++  }
++  fd.close();
++
++  // Read back using the unchanged fail-closed EXISTING entrypoint and exactly
++  // the requested current key. Publish nothing and require zero user records.
++  Binlog verifier;
++  size_t replayed = 0;
++  auto verified = verifier.init(path, [&](const BinlogEvent &) { replayed++; }, std::move(db_key));
++  if (verified.is_error() || verifier.close().is_error()) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_VALIDATION_REFUSED");
++  }
++  if (replayed != 0 || !reservation.finish_formatting()) {
++    return Status::Error("TGCLI_G1_BINLOG_NEW_VALIDATION_REFUSED");
++  }
++  failure_guard.dismiss();
++  // Metadata sealing and production profile/schema/version binding belong to
++  // the future coordinator, not this low-level encrypted-header formatter.
++  return Status::OK();
++}
++
+ Status Binlog::init(string path, const Callback &callback, DbKey db_key, DbKey /*old_db_key*/, int32 dummy,
+                     const Callback &debug_callback) {
+   close().ignore();
+--- a/tddb/td/db/binlog/Binlog.h
++++ b/tddb/td/db/binlog/Binlog.h
+@@ -24,6 +24,10 @@
+ #include "td/utils/UInt.h"
+ 
+ #include <functional>
++
++namespace telegram_cli::native_g1 {
++class NewReservation;
++}
+ 
+ namespace td {
+ 
+@@ -52,6 +56,11 @@
+   Binlog(Binlog &&) = delete;
+   Binlog &operator=(Binlog &&) = delete;
+   ~Binlog();
++
++  // Explicit live NEW reservation only. Creates, syncs, read-validates and
++  // closes an encrypted empty binlog; does not seal metadata or open an engine.
++  static Status create_new_encrypted(telegram_cli::native_g1::NewReservation &reservation,
++                                     DbKey db_key) TD_WARN_UNUSED_RESULT;
+ 
+   using Callback = std::function<void(const BinlogEvent &)>;
+   Status init(string path, const Callback &callback, DbKey db_key = DbKey::empty(), DbKey old_db_key = DbKey::empty(),

@@ -1,0 +1,2313 @@
+--- a/td/telegram/Client.h
++++ b/td/telegram/Client.h
+@@ -14,6 +14,8 @@
+ #include <cstdint>
+ #include <memory>
+ 
++namespace telegram_cli::native_g1 { class StorageContext; }
++
+ namespace td {
+ 
+ /**
+@@ -78,6 +80,9 @@
+    */
+   ClientId create_client_id();
+ 
++  // Telegram-CLI private G1 binding extension; context is consumed/bound once.
++  ClientId create_client_id(std::shared_ptr<telegram_cli::native_g1::StorageContext> context);
++
+   /**
+    * Sends request to TDLib. May be called from any thread.
+    * \param[in] client_id TDLib client instance identifier.
+--- a/td/telegram/Client.cpp
++++ b/td/telegram/Client.cpp
+@@ -7,6 +7,7 @@
+ #include "td/telegram/Client.h"
+ 
+ #include "td/telegram/Td.h"
++#include "td/telegram/g1/g1-storage-context.h"
+ #include "td/telegram/TdCallback.h"
+ 
+ #include "td/actor/actor.h"
+@@ -86,9 +87,11 @@
+ 
+ class ClientManager::Impl final {
+  public:
+-  ClientId create_client_id() {
++  ClientId create_client_id(std::shared_ptr<telegram_cli::native_g1::StorageContext> context = nullptr) {
+     CHECK(client_id_ != std::numeric_limits<ClientId>::max());
+     auto client_id = ++client_id_;
++    if (context && !context->bind_client(client_id)) { return 0; }
++    pending_contexts_[client_id] = std::move(context);
+     pending_clients_.insert(client_id);
+     return client_id;
+   }
+@@ -102,8 +105,11 @@
+         concurrent_scheduler_ = make_unique<ConcurrentScheduler>(0, 0);
+         concurrent_scheduler_->start();
+       }
+-      tds_[client_id] =
+-          concurrent_scheduler_->create_actor_unsafe<Td>(0, "Td", receiver_.create_callback(client_id), options_);
++      auto options = options_;
++      options.g1_context = std::move(pending_contexts_[client_id]);
++      pending_contexts_.erase(client_id);
++      tds_[client_id] = concurrent_scheduler_->create_actor_unsafe<Td>(
++          0, "Td", receiver_.create_callback(client_id), std::move(options));
+     }
+     requests_.push_back({client_id, request_id, std::move(request)});
+   }
+@@ -208,6 +214,7 @@
+   ClientId client_id_{0};
+   Td::Options options_;
+   FlatHashSet<int32> pending_clients_;
++  FlatHashMap<int32, std::shared_ptr<telegram_cli::native_g1::StorageContext>> pending_contexts_;
+   FlatHashMap<int32, ActorOwn<Td>> tds_;
+ };
+ 
+@@ -240,7 +247,8 @@
+  public:
+   explicit MultiTd(Td::Options options) : options_(std::move(options)) {
+   }
+-  void create(int32 td_id, unique_ptr<TdCallback> callback) {
++  void create(int32 td_id, unique_ptr<TdCallback> callback,
++              std::shared_ptr<telegram_cli::native_g1::StorageContext> g1_context) {
+     auto &td = tds_[td_id];
+     CHECK(td.empty());
+ 
+@@ -248,7 +256,9 @@
+     auto context = std::make_shared<ActorContext>();
+     auto old_context = set_context(context);
+     auto old_tag = set_tag(to_string(td_id));
+-    td = create_actor<Td>("Td", std::move(callback), options_);
++    auto options = options_;
++    options.g1_context = std::move(g1_context);
++    td = create_actor<Td>("Td", std::move(callback), std::move(options));
+     set_context(std::move(old_context));
+     set_tag(std::move(old_tag));
+   }
+@@ -380,10 +390,11 @@
+     return static_cast<int32>(result);
+   }
+ 
+-  void create(int32 td_id, unique_ptr<TdCallback> callback) {
++  void create(int32 td_id, unique_ptr<TdCallback> callback,
++              std::shared_ptr<telegram_cli::native_g1::StorageContext> context = nullptr) {
+     LOG(INFO) << "Initialize client " << td_id;
+     auto guard = concurrent_scheduler_->get_send_guard();
+-    send_closure(multi_td_, &MultiTd::create, td_id, std::move(callback));
++    send_closure(multi_td_, &MultiTd::create, td_id, std::move(callback), std::move(context));
+   }
+ 
+   static bool is_valid_client_id(int32 client_id) {
+@@ -478,12 +489,12 @@
+ 
+ class ClientManager::Impl final {
+  public:
+-  ClientId create_client_id() {
++  ClientId create_client_id(std::shared_ptr<telegram_cli::native_g1::StorageContext> context = nullptr) {
+     auto client_id = MultiImpl::create_id();
+-    LOG(INFO) << "Created managed client " << client_id;
++    if (context && !context->bind_client(client_id)) { return 0; }
+     {
+       auto lock = impls_mutex_.lock_write();
+-      impls_[client_id];  // create empty MultiImplInfo
++      impls_[client_id].g1_context = std::move(context);
+     }
+     return client_id;
+   }
+@@ -504,7 +515,7 @@
+       it = impls_.find(client_id);
+       if (it != impls_.end() && it->second.impl == nullptr) {
+         it->second.impl = pool_.get();
+-        it->second.impl->create(client_id, receiver_.create_callback(client_id));
++        it->second.impl->create(client_id, receiver_.create_callback(client_id), it->second.g1_context);
+       }
+       write_lock.reset();
+ 
+@@ -585,6 +596,7 @@
+   RwMutex impls_mutex_;
+   struct MultiImplInfo {
+     std::shared_ptr<MultiImpl> impl;
++    std::shared_ptr<telegram_cli::native_g1::StorageContext> g1_context;
+     bool is_closed = false;
+   };
+   FlatHashMap<ClientId, MultiImplInfo> impls_;
+@@ -671,6 +683,12 @@
+   return impl_->create_client_id();
+ }
+ 
++ClientManager::ClientId ClientManager::create_client_id(
++    std::shared_ptr<telegram_cli::native_g1::StorageContext> context) {
++  if (!context) { return 0; }
++  return impl_->create_client_id(std::move(context));
++}
++
+ void ClientManager::send(ClientId client_id, RequestId request_id, td_api::object_ptr<td_api::Function> &&request) {
+   impl_->send(client_id, request_id, std::move(request));
+ }
+--- a/td/telegram/Td.h
++++ b/td/telegram/Td.h
+@@ -28,6 +28,8 @@
+ #include <memory>
+ #include <unordered_map>
+ #include <utility>
++
++namespace telegram_cli::native_g1 { class StorageContext; }
+ 
+ namespace td {
+ 
+@@ -142,6 +144,7 @@
+ 
+   struct Options {
+     std::shared_ptr<NetQueryStats> net_query_stats;
++    std::shared_ptr<telegram_cli::native_g1::StorageContext> g1_context;
+   };
+ 
+   Td(unique_ptr<TdCallback> callback, Options options);
+@@ -149,6 +152,10 @@
+   void request(uint64 id, tl_object_ptr<td_api::Function> function);
+ 
+   void destroy();
++
++  // G1 terminal stop / native sync+seal completion. Not user-facing APIs.
++  void stop_g1();
++  void on_g1_ready(Result<TdDb::AuthorizationSealResult> result);
+ 
+   void on_update(telegram_api::object_ptr<telegram_api::Updates> updates, uint64 auth_key_id);
+ 
+@@ -398,6 +405,8 @@
+   int request_actor_refcnt_ = 0;
+   int stop_cnt_ = 2;
+   bool destroy_flag_ = false;
++  bool g1_seal_pending_ = false;
++  bool g1_ready_published_ = false;
+   int close_flag_ = 0;
+ 
+   enum class State : int32 { WaitParameters, Run, Close } state_ = State::WaitParameters;
+--- a/td/telegram/Td.cpp
++++ b/td/telegram/Td.cpp
+@@ -5,6 +5,7 @@
+ // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
+ //
+ #include "td/telegram/Td.h"
++#include "td/telegram/g1/g1-storage-context.h"
+ 
+ #include "td/telegram/AccountManager.h"
+ #include "td/telegram/AlarmManager.h"
+@@ -287,7 +288,43 @@
+     return callback_->on_error(id, make_error(400, "Request is empty"));
+   }
+ 
+-  VLOG(td_requests) << "Receive request " << id << ": " << to_string(function);
++  // Initial G1 reader scope. No unarmed storage/authentication, destructive
++  // requests, or user-message mutations. Add later APIs only with their gates.
++  auto context = td_options_.g1_context;
++  bool permitted = function->get_id() == td_api::close::ID;
++  if (!context || context->state() != telegram_cli::native_g1::StorageContext::State::Stopped) {
++    if (function->get_id() == td_api::getOption::ID) {
++      permitted |= static_cast<const td_api::getOption *>(function.get())->name_ == "version";
++    }
++    if (context && context->validate()) {
++      switch (function->get_id()) {
++        case td_api::setTdlibParameters::ID:
++        case td_api::getAuthorizationState::ID:
++          permitted = true; break;
++        case td_api::setAuthenticationPhoneNumber::ID:
++        case td_api::checkAuthenticationCode::ID:
++        case td_api::checkAuthenticationPassword::ID:
++          permitted = context->is_new() && !g1_ready_published_ &&
++              context->state() == telegram_cli::native_g1::StorageContext::State::AwaitingAuthorization;
++          break;
++        case td_api::getMe::ID:
++        case td_api::getChats::ID:
++        case td_api::loadChats::ID:
++        case td_api::getChat::ID:
++        case td_api::getChatHistory::ID:
++        case td_api::searchChats::ID:
++        case td_api::searchChatsOnServer::ID:
++        case td_api::openChat::ID:
++        case td_api::closeChat::ID:
++        case td_api::getCurrentState::ID:
++          permitted = g1_ready_published_ && context->private_data_allowed(); break;
++        default: break;
++      }
++    }
++  }
++  if (!permitted) {
++    return callback_->on_error(id, make_error(400, "TGCLI_G1_REQUEST_REFUSED"));
++  }
+   request_set_.emplace(id, function->get_id());
+   if (SynchronousRequests::is_synchronous_request(function.get())) {
+     // send response synchronously
+@@ -773,10 +810,44 @@
+ }
+ 
+ void Td::destroy() {
++  if (td_options_.g1_context) { return stop_g1(); }
+   close_impl(true);
+ }
+ 
++void Td::stop_g1() {
++  if (td_options_.g1_context) { td_options_.g1_context->stop(); }
++  g1_ready_published_ = false;
++  if (state_ == State::Run && !close_flag_) {
++    // Stop dispatch before close/save and preserve a terminal native marker.
++    // No destroy_auth_keys RPC, logout, database deletion or reauthentication.
++    G()->net_query_dispatcher().stop();
++    G()->td_db()->get_binlog_pmc()->set("auth", "destroy");
++  }
++  close_impl(false);
++}
++
++void Td::on_g1_ready(Result<TdDb::AuthorizationSealResult> result) {
++  g1_seal_pending_ = false;
++  if (result.is_error()) { result.error().ignore(); return stop_g1(); }
++  if (close_flag_ || !td_options_.g1_context || !td_options_.g1_context->validate()) { return stop_g1(); }
++  if (result.move_as_ok() != TdDb::AuthorizationSealResult::Ready) {
++    // Healthy contention/change is NOT READY. No automatic resync/backoff/wait
++    // budget selected: that pending workflow remains a production fence blocker.
++    return;
++  }
++  if (!td_options_.g1_context->private_data_allowed()) { return stop_g1(); }
++  g1_ready_published_ = true;
++  send_update(td_api::make_object<td_api::updateAuthorizationState>(
++      td_api::make_object<td_api::authorizationStateReady>()));
++}
++
+ void Td::close_impl(bool destroy_flag) {
++  if (td_options_.g1_context) {
++    td_options_.g1_context->stop();
++    g1_ready_published_ = false;
++    destroy_flag = false;
++    destroy_flag_ = false; // Includes late destroy after a close already began.
++  }
+   destroy_flag_ |= destroy_flag;
+   if (close_flag_) {
+     return;
+@@ -840,6 +911,12 @@
+   if (r_opened_database.is_error()) {
+     LOG(WARNING) << "Failed to open database: " << r_opened_database.error();
+     send_closure(actor_id(this), &Td::send_error, set_parameters_request_id_, r_opened_database.move_as_error());
++    if (td_options_.g1_context) {
++      td_options_.g1_context->stop();
++      pending_set_parameters_requests_.clear();
++      finish_set_parameters();
++      return stop_g1();
++    }
+     return finish_set_parameters();
+   }
+   auto events = r_opened_database.move_as_ok();
+@@ -1362,6 +1439,40 @@
+ void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
+   CHECK(object != nullptr);
+   auto object_id = object->get_id();
++  auto context = td_options_.g1_context;
++  if (context) {
++    bool public_lifecycle = false;
++    if (object_id == td_api::updateAuthorizationState::ID) {
++      auto state = static_cast<const td_api::updateAuthorizationState *>(object.get())->authorization_state_->get_id();
++      public_lifecycle = state == td_api::authorizationStateClosing::ID || state == td_api::authorizationStateClosed::ID;
++      if (state == td_api::authorizationStateReady::ID) {
++        if (close_flag_ || !context->validate()) { return stop_g1(); }
++        if (!g1_ready_published_) {
++          if (!g1_seal_pending_) {
++            if (context->is_new()) {
++              auto initialized = G()->net_query_dispatcher().initialize_g1_new_main_dc();
++              if (initialized.is_error()) { initialized.ignore(); return stop_g1(); }
++            }
++            g1_seal_pending_ = true;
++            G()->td_db()->seal_authorized(PromiseCreator::lambda([self = actor_id(this)](Result<TdDb::AuthorizationSealResult> result) mutable {
++              send_closure_later(self, &Td::on_g1_ready, std::move(result));
++            }));
++          }
++          return;
++        }
++      } else if (!public_lifecycle) {
++        bool supported = state == td_api::authorizationStateWaitTdlibParameters::ID ||
++            (context->is_new() && !g1_ready_published_ &&
++             context->state() == telegram_cli::native_g1::StorageContext::State::AwaitingAuthorization &&
++             (state == td_api::authorizationStateWaitPhoneNumber::ID ||
++              state == td_api::authorizationStateWaitCode::ID ||
++              state == td_api::authorizationStateWaitPassword::ID));
++        if (!supported) { return stop_g1(); }
++        public_lifecycle = true;
++      }
++    }
++    if (!public_lifecycle && (!g1_ready_published_ || !context->private_data_allowed())) { return; }
++  }
+   if (close_flag_ >= 5 && object_id != td_api::updateAuthorizationState::ID) {
+     // just in case
+     return;
+@@ -1410,6 +1521,16 @@
+ 
+   auto it = request_set_.find(id);
+   if (it != request_set_.end()) {
++    if (td_options_.g1_context && (!g1_ready_published_ || !td_options_.g1_context->private_data_allowed())) {
++      auto type = it->second;
++      bool preauth = type == td_api::getOption::ID || type == td_api::setTdlibParameters::ID ||
++          type == td_api::getAuthorizationState::ID || type == td_api::setAuthenticationPhoneNumber::ID ||
++          type == td_api::checkAuthenticationCode::ID || type == td_api::checkAuthenticationPassword::ID ||
++          type == td_api::close::ID;
++      if (!preauth || (object && object->get_id() == td_api::authorizationStateReady::ID)) {
++        return send_error_impl(id, make_error(503, "TGCLI_G1_NOT_READY"));
++      }
++    }
+     if (object == nullptr) {
+       object = td_api::make_object<td_api::error>(404, "Not Found");
+     }
+@@ -1440,7 +1561,12 @@
+ 
+ Result<std::pair<Td::Parameters, TdDb::Parameters>> Td::get_parameters(
+     td_api::object_ptr<td_api::setTdlibParameters> parameters) {
+-  VLOG(td_init) << "Begin to set TDLib parameters";
++  auto context = td_options_.g1_context;
++  if (!context || !context->validate() || parameters->use_secret_chats_ ||
++      parameters->database_encryption_key_.size() != 32) {
++    if (context) { context->stop(); }
++    return Status::Error(400, "TGCLI_G1_PARAMETERS_REFUSED");
++  }
+   if (!clean_input_string(parameters->api_hash_) || !clean_input_string(parameters->system_language_code_) ||
+       !clean_input_string(parameters->device_model_) || !clean_input_string(parameters->system_version_) ||
+       !clean_input_string(parameters->application_version_)) {
+@@ -1460,6 +1586,7 @@
+   result.first.api_hash_ = std::move(parameters->api_hash_);
+   result.first.use_secret_chats_ = parameters->use_secret_chats_;
+ 
++  result.second.g1_context_ = std::move(context);
+   result.second.encryption_key_ = TdDb::as_db_key(std::move(parameters->database_encryption_key_));
+   result.second.database_directory_ = std::move(parameters->database_directory_);
+   result.second.files_directory_ = std::move(parameters->files_directory_);
+--- a/td/telegram/TdDb.h
++++ b/td/telegram/TdDb.h
+@@ -18,6 +18,8 @@
+ 
+ #include <functional>
+ #include <memory>
++
++namespace telegram_cli::native_g1 { class StorageContext; }
+ 
+ namespace td {
+ 
+@@ -53,6 +55,7 @@
+   ~TdDb();
+ 
+   struct Parameters {
++    std::shared_ptr<telegram_cli::native_g1::StorageContext> g1_context_;
+     DbKey encryption_key_;
+     string database_directory_;
+     string files_directory_;
+@@ -88,6 +91,15 @@
+ 
+   static Status destroy(const Parameters &parameters);
+ 
++  // NEW-only native initialization, called under the dispatcher's main-DC mutex.
++  // Refuses EXISTING, mismatches, non-authorized phases and malformed values.
++  Status initialize_g1_new_main_dc(int32 actual_main_dc);
++
++  // Internal required-state barrier; full native semantics/initializer audit is
++  // still incomplete. BUSY/CHANGED is NOT READY, not corruption or a retry policy.
++  enum class AuthorizationSealResult { Busy, Changed, Ready };
++  void seal_authorized(Promise<AuthorizationSealResult> promise);
++
+   Slice get_database_directory() const {
+     return parameters_.database_directory_;
+   }
+--- a/td/telegram/TdDb.cpp
++++ b/td/telegram/TdDb.cpp
+@@ -1,12 +1,12 @@
+ //
+ // Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
+-//
+-// Distributed under the Boost Software License, Version 1.0. (See accompanying
+-// file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
++// Distributed under the Boost Software License, Version 1.0.
++// Telegram-CLI G1 integration DRAFT: unactivated; no whole-engine acceptance.
+ //
+ #include "td/telegram/TdDb.h"
+-
+-#include "td/telegram/AttachMenuManager.h"
++#include "td/telegram/g1/g1-storage-context.h"
++#include "td/telegram/g1/native-dc-value.h"
++#include "td/telegram/g1/native-value-codec.h"
+ #include "td/telegram/DialogDb.h"
+ #include "td/telegram/files/FileDb.h"
+ #include "td/telegram/Global.h"
+@@ -14,759 +14,293 @@
+ #include "td/telegram/MessageDb.h"
+ #include "td/telegram/MessageThreadDb.h"
+ #include "td/telegram/StoryDb.h"
+-#include "td/telegram/Td.h"
+-#include "td/telegram/Version.h"
+-
+ #include "td/db/binlog/Binlog.h"
+ #include "td/db/binlog/ConcurrentBinlog.h"
+ #include "td/db/BinlogKeyValue.h"
+ #include "td/db/SqliteConnectionSafe.h"
+-#include "td/db/SqliteDb.h"
+ #include "td/db/SqliteKeyValue.h"
+ #include "td/db/SqliteKeyValueAsync.h"
+ #include "td/db/SqliteKeyValueSafe.h"
+-
+ #include "td/actor/actor.h"
+ #include "td/actor/MultiPromise.h"
+-
+-#include "td/utils/common.h"
+-#include "td/utils/format.h"
+-#include "td/utils/logging.h"
+-#include "td/utils/misc.h"
+-#include "td/utils/port/Clocks.h"
+-#include "td/utils/port/path.h"
+-#include "td/utils/port/Stat.h"
+-#include "td/utils/Random.h"
+-#include "td/utils/SliceBuilder.h"
+-#include "td/utils/StringBuilder.h"
+-
+-#include <algorithm>
++#include "td/utils/ScopeGuard.h"
++#include "td/utils/tl_parsers.h"
+ 
+ namespace td {
+-
+ namespace {
+-
+-std::string get_binlog_path(const TdDb::Parameters &parameters) {
+-  return PSTRING() << parameters.database_directory_ << "td" << (parameters.is_test_dc_ ? "_test" : "") << ".binlog";
+-}
+-
+-std::string get_sqlite_path(const TdDb::Parameters &parameters) {
+-  const string db_name = "db" + (parameters.is_test_dc_ ? string("_test") : string());
+-  return parameters.database_directory_ + db_name + ".sqlite";
+-}
+-
+-Status init_binlog(Binlog &binlog, string path, BinlogKeyValue<Binlog> &binlog_pmc, BinlogKeyValue<Binlog> &config_pmc,
+-                   TdDb::OpenedDatabase &events, DbKey key) {
+-  auto r_binlog_stat = stat(path);
+-  if (r_binlog_stat.is_ok()) {
+-    auto since_last_open = Clocks::system() - static_cast<double>(r_binlog_stat.ok().mtime_nsec_) * 1e-9;
+-    if (since_last_open >= 86400) {
+-      LOG(WARNING) << "Binlog wasn't opened for " << since_last_open << " seconds";
++namespace g1 = telegram_cli::native_g1;
++
++Status refused() { return Status::Error(400, "TGCLI_G1_NATIVE_ADMISSION_REFUSED"); }
++
++std::string_view borrowed(Slice value) { return {value.data(), value.size()}; }
++std::string_view borrowed(const std::string &value) { return {value.data(), value.size()}; }
++
++// Strict canonical native my_id; no UserManager's legacy substring rewrite.
++// Snapshot overloads borrow under existing guards; never recursively relock.
++template<class Store>
++bool personal_identity_valid(Store &pmc) {
++  if (pmc.get("auth") != "ok" || pmc.isset("auth_is_bot") || pmc.isset("auth_state") || pmc.isset("sqlite_key")) {
++    return false;
++  }
++  return g1::canonical_personal_user_id(borrowed(pmc.get("my_id")));
++}
++
++// Raw quarantine stores are not shared yet. Snapshot overloads use only their
++// already-guarded borrowed get(), never ordinary owner getters or recursive locks.
++// Missing/empty/config-type mismatch is refusal, not an instruction to overwrite.
++template<class Store>
++bool identity_pair_valid(Store &pmc, Store &config) {
++  const auto id = pmc.get("my_id"), mirror = config.get("my_id");
++  return g1::personal_identity_pair_valid(borrowed(id), borrowed(mirror));
++}
++
++template<class Store>
++bool personal_authorized(Store &pmc) {
++  if (!personal_identity_valid(pmc)) { return false; }
++  const auto main = pmc.get("main_dc_id");
++  const auto main_dc = g1::canonical_main_dc(borrowed(main));
++  if (main_dc == 0) { return false; }
++  bool valid = true, primary_found = false, main_found = false;
++  // BinlogKeyValue::for_each retains its map lock; borrowed values never escape.
++  // Do not recursively call pmc.get/isset inside this callback.
++  pmc.for_each([&](Slice key, Slice value) {
++    auto name = borrowed(key), bytes = borrowed(value);
++    if (name == "main_dc_id") { main_found = bytes == borrowed(main); valid &= main_found; }
++    if (name == "server_time_difference") { valid &= g1::server_time_difference_valid(bytes); }
++    if (name == "config_expire") { valid &= g1::canonical_int32(bytes); }
++    const auto role = g1::persisted_dc_role(name, main_dc);
++    if (role == g1::PersistedDcRole::Malformed) { valid = false; }
++    if (role == g1::PersistedDcRole::PrimaryAuth || role == g1::PersistedDcRole::AuxiliaryAuth) {
++      const bool primary = role == g1::PersistedDcRole::PrimaryAuth;
++      primary_found |= primary;
++      valid &= g1::persisted_auth_key_valid(bytes, primary);
+     }
+-    if (since_last_open > 0 && since_last_open < 1e12) {
+-      events.since_last_open = static_cast<int64>(since_last_open);
++    if (role == g1::PersistedDcRole::Salt) { valid &= g1::persisted_salts_valid(bytes); }
++  });
++  return valid && primary_found && main_found;
++}
++
++template<class Store>
++bool config_codecs_valid(Store &config) {
++  bool valid = true;
++  config.for_each([&](Slice name, Slice value) {
++    auto key = borrowed(name);
++    valid &= g1::config_option_entry_codec_valid(key, borrowed(value));
++  });
++  // Entry framing + selected24-name absence only. Other per-option domains,
++  // default/cleanup rules and cross-fields remain an integration blocker.
++  return valid;
++}
++
++Status init_binlog(Binlog &binlog, const std::string &path, BinlogKeyValue<Binlog> &pmc,
++                   BinlogKeyValue<Binlog> &config, DbKey key) {
++  Status parsed = Status::OK();
++  auto status = binlog.init(path, [&](const BinlogEvent &event) {
++    if (parsed.is_error()) { return; }
++    BinlogKeyValue<Binlog> *target = nullptr;
++    if (event.type_ == LogEvent::HandlerType::BinlogPmcMagic) { target = &pmc; }
++    if (event.type_ == LogEvent::HandlerType::ConfigPmcMagic) { target = &config; }
++    // Initial reader-only integration: never publish/replay durable outgoing
++    // mutations. Non-PMC handlers require their semantic gate before support.
++    if (target == nullptr) { parsed = refused(); return; }
++    BinlogKeyValue<Binlog>::Event value;
++    TlParser parser(event.get_data());
++    value.parse(parser);
++    parser.fetch_end();
++    if (parser.get_error() != nullptr || value.key.empty() || target->isset(value.key.str())) {
++      parsed = refused(); return;
+     }
+-  }
+-
+-  auto callback = [&](const BinlogEvent &event) {
+-    switch (event.type_) {
+-      case LogEvent::HandlerType::SecretChats:
+-        events.to_secret_chats_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::Users:
+-        events.user_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::Chats:
+-        events.chat_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::Channels:
+-        events.channel_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::SecretChatInfos:
+-        events.secret_chat_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::Communities:
+-        events.community_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::WebPages:
+-        events.web_page_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::SetPollAnswer:
+-      case LogEvent::HandlerType::StopPoll:
+-        events.to_poll_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::ReorderPinnedDialogsOnServer:
+-      case LogEvent::HandlerType::ToggleDialogIsBlockedOnServer:
+-      case LogEvent::HandlerType::ToggleDialogIsMarkedAsUnreadOnServer:
+-      case LogEvent::HandlerType::ToggleDialogIsPinnedOnServer:
+-      case LogEvent::HandlerType::ToggleDialogIsTranslatableOnServer:
+-      case LogEvent::HandlerType::ToggleDialogReportSpamStateOnServer:
+-      case LogEvent::HandlerType::ToggleDialogViewAsMessagesOnServer:
+-        events.to_dialog_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::BlockMessageSenderFromRepliesOnServer:
+-      case LogEvent::HandlerType::DeleteAllCallMessagesOnServer:
+-      case LogEvent::HandlerType::DeleteAllChannelMessagesFromSenderOnServer:
+-      case LogEvent::HandlerType::DeleteDialogHistoryOnServer:
+-      case LogEvent::HandlerType::DeleteDialogMessagesByDateOnServer:
+-      case LogEvent::HandlerType::DeleteMessagesOnServer:
+-      case LogEvent::HandlerType::DeleteScheduledMessagesOnServer:
+-      case LogEvent::HandlerType::DeleteTopicHistoryOnServer:
+-      case LogEvent::HandlerType::ReadAllDialogMentionsOnServer:
+-      case LogEvent::HandlerType::ReadAllDialogReactionsOnServer:
+-      case LogEvent::HandlerType::ReadMessageContentsOnServer:
+-      case LogEvent::HandlerType::UnpinAllDialogMessagesOnServer:
+-      case LogEvent::HandlerType::ReadAllPollVotesOnServer:
+-      case LogEvent::HandlerType::DeleteEphemeralMessageOnServer:
+-        events.to_message_query_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::SendMessage:
+-      case LogEvent::HandlerType::DeleteMessage:
+-      case LogEvent::HandlerType::ReadHistoryOnServer:
+-      case LogEvent::HandlerType::ForwardMessages:
+-      case LogEvent::HandlerType::SendBotStartMessage:
+-      case LogEvent::HandlerType::SendScreenshotTakenNotificationMessage:
+-      case LogEvent::HandlerType::SendInlineQueryResultMessage:
+-      case LogEvent::HandlerType::SaveDialogDraftMessageOnServer:
+-      case LogEvent::HandlerType::UpdateDialogNotificationSettingsOnServer:
+-      case LogEvent::HandlerType::RegetDialog:
+-      case LogEvent::HandlerType::GetChannelDifference:
+-      case LogEvent::HandlerType::ReadHistoryInSecretChat:
+-      case LogEvent::HandlerType::SetDialogFolderIdOnServer:
+-      case LogEvent::HandlerType::ReadMessageThreadHistoryOnServer:
+-      case LogEvent::HandlerType::SendQuickReplyShortcutMessages:
+-        events.to_messages_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::DeleteStoryOnServer:
+-      case LogEvent::HandlerType::ReadStoriesOnServer:
+-      case LogEvent::HandlerType::LoadDialogExpiringStories:
+-      case LogEvent::HandlerType::SendStory:
+-      case LogEvent::HandlerType::EditStory:
+-        events.to_story_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::ResetAllNotificationSettingsOnServer:
+-      case LogEvent::HandlerType::UpdateScopeNotificationSettingsOnServer:
+-      case LogEvent::HandlerType::UpdateReactionNotificationSettingsOnServer:
+-        events.to_notification_settings_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::AddMessagePushNotification:
+-      case LogEvent::HandlerType::EditMessagePushNotification:
+-        events.to_notification_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::SaveAppLog:
+-        events.save_app_log_events.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::ChangeAuthorizationSettingsOnServer:
+-      case LogEvent::HandlerType::InvalidateSignInCodesOnServer:
+-      case LogEvent::HandlerType::ResetAuthorizationOnServer:
+-      case LogEvent::HandlerType::ResetAuthorizationsOnServer:
+-      case LogEvent::HandlerType::ResetWebAuthorizationOnServer:
+-      case LogEvent::HandlerType::ResetWebAuthorizationsOnServer:
+-      case LogEvent::HandlerType::SetAccountTtlOnServer:
+-      case LogEvent::HandlerType::SetAuthorizationTtlOnServer:
+-      case LogEvent::HandlerType::SetDefaultHistoryTtlOnServer:
+-        events.to_account_manager.push_back(event.clone());
+-        break;
+-      case LogEvent::HandlerType::BinlogPmcMagic:
+-        binlog_pmc.external_init_handle(event);
+-        break;
+-      case LogEvent::HandlerType::ConfigPmcMagic:
+-        config_pmc.external_init_handle(event);
+-        break;
+-      default:
+-        LOG(FATAL) << "Unsupported log event type " << event.type_;
+-    }
+-  };
+-
+-  auto init_status = binlog.init(std::move(path), callback, std::move(key));
+-  if (init_status.is_error()) {
+-    if (init_status.code() == static_cast<int>(Binlog::Error::WrongPassword)) {
+-      return Status::Error(401, "Wrong database encryption key");
+-    }
+-    return Status::Error(400, init_status.message());
+-  }
+-  return Status::OK();
+-}
+-
+-}  // namespace
+-
+-std::shared_ptr<FileDbInterface> TdDb::get_file_db_shared() {
+-  return file_db_;
+-}
+-
+-std::shared_ptr<SqliteConnectionSafe> &TdDb::get_sqlite_connection_safe() {
+-  return sql_connection_;
+-}
+-
+-BinlogInterface *TdDb::get_binlog_impl(const char *file, int line) {
+-  LOG_CHECK(binlog_) << G()->close_flag() << " " << file << " " << line;
+-  return binlog_.get();
+-}
+-
+-std::shared_ptr<KeyValueSyncInterface> TdDb::get_binlog_pmc_shared() {
+-  CHECK(binlog_pmc_);
+-  return binlog_pmc_;
+-}
+-
+-std::shared_ptr<KeyValueSyncInterface> TdDb::get_config_pmc_shared() {
+-  CHECK(config_pmc_);
+-  return config_pmc_;
+-}
+-
+-KeyValueSyncInterface *TdDb::get_binlog_pmc_impl(const char *file, int line) {
+-  LOG_CHECK(binlog_pmc_) << G()->close_flag() << ' ' << file << ' ' << line;
+-  return binlog_pmc_.get();
+-}
+-
+-KeyValueSyncInterface *TdDb::get_config_pmc() {
+-  CHECK(config_pmc_);
+-  return config_pmc_.get();
+-}
+-
+-SqliteKeyValue *TdDb::get_sqlite_sync_pmc() {
+-  CHECK(common_kv_safe_);
+-  return &common_kv_safe_->get();
+-}
+-
+-SqliteKeyValueAsyncInterface *TdDb::get_sqlite_pmc() {
+-  CHECK(common_kv_async_);
+-  return common_kv_async_.get();
+-}
+-
+-MessageDbSyncInterface *TdDb::get_message_db_sync() {
+-  return &message_db_sync_safe_->get();
+-}
+-
+-MessageDbAsyncInterface *TdDb::get_message_db_async() {
+-  return message_db_async_.get();
+-}
+-
+-MessageThreadDbSyncInterface *TdDb::get_message_thread_db_sync() {
+-  return &message_thread_db_sync_safe_->get();
+-}
+-
+-MessageThreadDbAsyncInterface *TdDb::get_message_thread_db_async() {
+-  return message_thread_db_async_.get();
+-}
+-
+-DialogDbSyncInterface *TdDb::get_dialog_db_sync() {
+-  return &dialog_db_sync_safe_->get();
+-}
+-
+-DialogDbAsyncInterface *TdDb::get_dialog_db_async() {
+-  return dialog_db_async_.get();
+-}
+-
+-StoryDbSyncInterface *TdDb::get_story_db_sync() {
+-  return &story_db_sync_safe_->get();
+-}
+-
+-StoryDbAsyncInterface *TdDb::get_story_db_async() {
+-  return story_db_async_.get();
+-}
+-
+-void TdDb::flush_all() {
+-  LOG(INFO) << "Flush all databases";
+-  if (message_db_async_) {
+-    message_db_async_->force_flush();
+-  }
+-  if (message_thread_db_async_) {
+-    message_thread_db_async_->force_flush();
+-  }
+-  if (dialog_db_async_) {
+-    dialog_db_async_->force_flush();
+-  }
+-  if (story_db_async_) {
+-    story_db_async_->force_flush();
+-  }
+-  CHECK(binlog_ != nullptr);
+-  binlog_->force_flush();
+-}
+-
++    target->external_init_handle(event); // Prevalidated; in-memory only.
++  }, std::move(key));
++  if (status.is_error()) { status.ignore(); parsed.ignore(); return refused(); }
++  return parsed;
++}
++} // namespace
++
++std::shared_ptr<FileDbInterface> TdDb::get_file_db_shared() { return file_db_; }
++std::shared_ptr<SqliteConnectionSafe> &TdDb::get_sqlite_connection_safe() { return sql_connection_; }
++BinlogInterface *TdDb::get_binlog_impl(const char *, int) { CHECK(binlog_); return binlog_.get(); }
++std::shared_ptr<KeyValueSyncInterface> TdDb::get_binlog_pmc_shared() { CHECK(binlog_pmc_); return binlog_pmc_; }
++std::shared_ptr<KeyValueSyncInterface> TdDb::get_config_pmc_shared() { CHECK(config_pmc_); return config_pmc_; }
++KeyValueSyncInterface *TdDb::get_binlog_pmc_impl(const char *, int) { CHECK(binlog_pmc_); return binlog_pmc_.get(); }
++KeyValueSyncInterface *TdDb::get_config_pmc() { CHECK(config_pmc_); return config_pmc_.get(); }
++SqliteKeyValue *TdDb::get_sqlite_sync_pmc() { CHECK(common_kv_safe_); return &common_kv_safe_->get(); }
++SqliteKeyValueAsyncInterface *TdDb::get_sqlite_pmc() { CHECK(common_kv_async_); return common_kv_async_.get(); }
++MessageDbSyncInterface *TdDb::get_message_db_sync() { CHECK(message_db_sync_safe_); return &message_db_sync_safe_->get(); }
++MessageDbAsyncInterface *TdDb::get_message_db_async() { CHECK(message_db_async_); return message_db_async_.get(); }
++MessageThreadDbSyncInterface *TdDb::get_message_thread_db_sync() { CHECK(message_thread_db_sync_safe_); return &message_thread_db_sync_safe_->get(); }
++MessageThreadDbAsyncInterface *TdDb::get_message_thread_db_async() { CHECK(message_thread_db_async_); return message_thread_db_async_.get(); }
++DialogDbSyncInterface *TdDb::get_dialog_db_sync() { CHECK(dialog_db_sync_safe_); return &dialog_db_sync_safe_->get(); }
++DialogDbAsyncInterface *TdDb::get_dialog_db_async() { CHECK(dialog_db_async_); return dialog_db_async_.get(); }
++StoryDbSyncInterface *TdDb::get_story_db_sync() { CHECK(story_db_sync_safe_); return &story_db_sync_safe_->get(); }
++StoryDbAsyncInterface *TdDb::get_story_db_async() { CHECK(story_db_async_); return story_db_async_.get(); }
++
++void TdDb::flush_all() { CHECK(binlog_); binlog_->force_flush(); }
+ void TdDb::close(int32 scheduler_id, bool destroy_flag, Promise<Unit> on_finished) {
+   Scheduler::instance()->run_on_scheduler(scheduler_id,
+-                                          [this, destroy_flag, on_finished = std::move(on_finished)](Unit) mutable {
+-                                            do_close(destroy_flag, std::move(on_finished));
+-                                          });
+-}
+-
++      [this, destroy_flag, on_finished = std::move(on_finished)](Unit) mutable {
++        do_close(destroy_flag, std::move(on_finished));
++      });
++}
+ void TdDb::do_close(bool destroy_flag, Promise<Unit> on_finished) {
+-  if (destroy_flag) {
+-    LOG(INFO) << "Destroy all databases";
+-  } else {
+-    LOG(INFO) << "Close all databases";
+-  }
+-  MultiPromiseActorSafe mpas{"TdDbCloseMultiPromiseActor"};
+-  mpas.add_promise(PromiseCreator::lambda(
+-      [promise = std::move(on_finished), sql_connection = std::move(sql_connection_), destroy_flag](Unit) mutable {
+-        if (sql_connection) {
+-          if (destroy_flag) {
+-            sql_connection->close_and_destroy();
+-          } else {
+-            sql_connection->close();
+-          }
+-          sql_connection.reset();
+-        }
+-        promise.set_value(Unit());
+-      }));
+-  auto lock = mpas.get_promise();
+-
+-  if (file_db_) {
+-    file_db_->close(mpas.get_promise());
+-    file_db_.reset();
+-  }
+-
+-  common_kv_safe_.reset();
+-  if (common_kv_async_) {
+-    common_kv_async_->close(mpas.get_promise());
+-  }
+-
+-  message_db_sync_safe_.reset();
+-  if (message_db_async_) {
+-    message_db_async_->close(mpas.get_promise());
+-  }
+-
+-  message_thread_db_sync_safe_.reset();
+-  if (message_thread_db_async_) {
+-    message_thread_db_async_->close(mpas.get_promise());
+-  }
+-
+-  dialog_db_sync_safe_.reset();
+-  if (dialog_db_async_) {
+-    dialog_db_async_->close(mpas.get_promise());
+-  }
+-
+-  story_db_sync_safe_.reset();
+-  if (story_db_async_) {
+-    story_db_async_->close(mpas.get_promise());
+-  }
+-
+-  // binlog_pmc is dependent on binlog_ and anyway it doesn't support close_and_destroy
++  if (parameters_.g1_context_) { parameters_.g1_context_->stop(); }
++  if (destroy_flag || sql_connection_ || file_db_ || common_kv_safe_ || common_kv_async_ ||
++      message_db_async_ || message_thread_db_async_ || dialog_db_async_ || story_db_async_) {
++    return on_finished.set_error(refused());
++  }
++  // Only normal binlog closure. No close_and_destroy, SQL cleanup or unlink.
+   binlog_pmc_.reset();
+   config_pmc_.reset();
+-
+   if (binlog_) {
+-    if (destroy_flag) {
+-      binlog_->close_and_destroy(mpas.get_promise());
+-    } else {
+-      binlog_->close(mpas.get_promise());
+-    }
++    binlog_->close(std::move(on_finished));
+     binlog_.reset();
+-  }
+-
+-  lock.set_value(Unit());
+-}
+-
+-Status TdDb::init_sqlite(const Parameters &parameters, const DbKey &key, const DbKey &old_key,
+-                         BinlogKeyValue<Binlog> &binlog_pmc) {
+-  CHECK(!parameters.use_message_database_ || parameters.use_chat_info_database_);
+-  CHECK(!parameters.use_chat_info_database_ || parameters.use_file_database_);
+-
+-  const string sql_database_path = get_sqlite_path(parameters);
+-
+-  bool use_sqlite = parameters.use_file_database_;
+-  bool use_file_database = parameters.use_file_database_;
+-  bool use_dialog_db = parameters.use_message_database_;
+-  bool use_message_thread_db = parameters.use_message_database_ && false;
+-  bool use_message_database = parameters.use_message_database_;
+-  bool use_story_database = parameters.use_message_database_;
+-
+-  was_dialog_db_created_ = false;
+-
+-  if (!use_sqlite) {
+-    SqliteDb::destroy(sql_database_path).ignore();
+-    return Status::OK();
+-  }
+-
+-  TRY_RESULT(db_instance, SqliteDb::change_key(sql_database_path, true, key, old_key));
+-  sql_connection_ = std::make_shared<SqliteConnectionSafe>(sql_database_path, key, db_instance.get_cipher_version());
+-  sql_connection_->set(std::move(db_instance));
+-  auto &db = sql_connection_->get();
+-  TRY_STATUS(db.exec("PRAGMA journal_mode=WAL"));
+-  TRY_STATUS(db.exec("PRAGMA secure_delete=1"));
+-
+-  // Init databases
+-  // Do initialization once and before everything else to avoid "database is locked" error.
+-  // Must be in a transaction
+-
+-  // NB: when database is dropped we should also drop corresponding binlog events
+-  TRY_STATUS(db.exec("BEGIN TRANSACTION"));
+-
+-  // Get 'PRAGMA user_version'
+-  TRY_RESULT(user_version, db.user_version());
+-  LOG(INFO) << "Have PRAGMA user_version = " << user_version;
+-
+-  // init DialogDb
+-  if (use_dialog_db) {
+-    TRY_STATUS(init_dialog_db(db, user_version, binlog_pmc, was_dialog_db_created_));
+   } else {
+-    TRY_STATUS(drop_dialog_db(db, user_version));
+-  }
+-
+-  // init MessageThreadDb
+-  if (use_message_thread_db) {
+-    TRY_STATUS(init_message_thread_db(db, user_version));
+-  } else {
+-    TRY_STATUS(drop_message_thread_db(db, user_version));
+-  }
+-
+-  // init MessageDb
+-  if (use_message_database) {
+-    TRY_STATUS(init_message_db(db, user_version));
+-  } else {
+-    TRY_STATUS(drop_message_db(db, user_version));
+-  }
+-
+-  // init StoryDb
+-  if (use_story_database) {
+-    TRY_STATUS(init_story_db(db, user_version));
+-  } else {
+-    TRY_STATUS(drop_story_db(db, user_version));
+-  }
+-
+-  // init FileDb
+-  if (use_file_database) {
+-    TRY_STATUS(init_file_db(db, user_version));
+-  } else {
+-    TRY_STATUS(drop_file_db(db, user_version));
+-  }
+-
+-  // Update 'PRAGMA user_version'
+-  auto db_version = current_db_version();
+-  if (db_version != user_version) {
+-    LOG(WARNING) << "Set PRAGMA user_version = " << db_version;
+-    TRY_STATUS(db.set_user_version(db_version));
+-  }
+-
+-  if (was_dialog_db_created_) {
+-    binlog_pmc.erase_by_prefix("pinned_dialog_ids");
+-    binlog_pmc.erase_by_prefix("last_server_dialog_date");
+-    binlog_pmc.erase_by_prefix("unread_message_count");
+-    binlog_pmc.erase_by_prefix("unread_dialog_count");
+-    binlog_pmc.erase("sponsored_dialog_id");
+-    binlog_pmc.erase_by_prefix("top_dialogs#");
+-    binlog_pmc.erase("dlds_counter");
+-    binlog_pmc.erase_by_prefix("dlds#");
+-    binlog_pmc.erase("fetched_marks_as_unread");
+-    binlog_pmc.erase_by_prefix("public_channels");
+-    binlog_pmc.erase("channels_to_send_stories");
+-    binlog_pmc.erase_by_prefix("saved_messages_tags");
+-  }
+-  if (user_version == 0) {
+-    binlog_pmc.erase("next_contacts_sync_date");
+-    binlog_pmc.erase("saved_contact_count");
+-    binlog_pmc.erase("old_featured_sticker_set_count");
+-    binlog_pmc.erase("invalidate_old_featured_sticker_sets");
+-    binlog_pmc.erase(AttachMenuManager::get_attach_menu_bots_database_key());
+-  }
+-  binlog_pmc.force_sync(Auto(), "init_sqlite");
+-
+-  TRY_STATUS(db.exec("COMMIT TRANSACTION"));
+-
+-  file_db_ = create_file_db(sql_connection_);
+-
+-  common_kv_safe_ = std::make_shared<SqliteKeyValueSafe>("common", sql_connection_);
+-  common_kv_async_ = create_sqlite_key_value_async(common_kv_safe_);
+-
+-  if (was_dialog_db_created_) {
+-    auto *sqlite_pmc = get_sqlite_sync_pmc();
+-    sqlite_pmc->erase("calls_db_state");
+-    sqlite_pmc->erase("di_active_live_location_messages");
+-    sqlite_pmc->erase_by_prefix("channel_recommendations");
+-  }
+-
+-  if (use_dialog_db) {
+-    dialog_db_sync_safe_ = create_dialog_db_sync(sql_connection_);
+-    dialog_db_async_ = create_dialog_db_async(dialog_db_sync_safe_);
+-  }
+-
+-  if (use_message_thread_db) {
+-    message_thread_db_sync_safe_ = create_message_thread_db_sync(sql_connection_);
+-    message_thread_db_async_ = create_message_thread_db_async(message_thread_db_sync_safe_);
+-  }
+-
+-  if (use_message_database) {
+-    message_db_sync_safe_ = create_message_db_sync(sql_connection_);
+-    message_db_async_ = create_message_db_async(message_db_sync_safe_);
+-  }
+-
+-  if (use_story_database) {
+-    story_db_sync_safe_ = create_story_db_sync(sql_connection_);
+-    story_db_async_ = create_story_db_async(story_db_sync_safe_);
+-  }
+-
++    on_finished.set_value(Unit());
++  }
++}
++Status TdDb::init_sqlite(const Parameters &, const DbKey &, const DbKey &, BinlogKeyValue<Binlog> &) {
++  return Status::Error(400, "TGCLI_G1_SQLITE_DISABLED");
++}
++void TdDb::open(int32 scheduler_id, Parameters parameters, Promise<OpenedDatabase> &&promise) {
++  Scheduler::instance()->run_on_scheduler(scheduler_id,
++      [parameters = std::move(parameters), promise = std::move(promise)](Unit) mutable {
++        open_impl(std::move(parameters), std::move(promise));
++      });
++}
++void TdDb::open_impl(Parameters parameters, Promise<OpenedDatabase> &&promise) {
++  auto context = parameters.g1_context_;
++  if (!context) { return promise.set_error(refused()); }
++  auto failure = ScopeExit() + [&] { context->stop(); };
++  TRY_STATUS_PROMISE(promise, check_parameters(parameters));
++  OpenedDatabase result;
++  // Real ownership on every early return. PMC shared handles are non-owning
++  // until transfer, unlike the old custom deleter which only saved a raw ptr.
++  auto owner = make_unique<Binlog>();
++  auto binlog = std::shared_ptr<Binlog>(owner.get(), [](Binlog *) {});
++  auto pmc = make_unique<BinlogKeyValue<Binlog>>();
++  auto config = make_unique<BinlogKeyValue<Binlog>>();
++  pmc->external_init_begin(static_cast<int32>(LogEvent::HandlerType::BinlogPmcMagic));
++  config->external_init_begin(static_cast<int32>(LogEvent::HandlerType::ConfigPmcMagic));
++  TRY_STATUS_PROMISE(promise, init_binlog(*binlog, context->binlog_path(), *pmc, *config,
++                                         std::move(parameters.encryption_key_)));
++  bool new_nonempty = false;
++  if (context->is_new()) {
++    pmc->for_each([&](Slice, Slice) { new_nonempty = true; });
++    config->for_each([&](Slice, Slice) { new_nonempty = true; });
++  }
++  if (pmc->isset("sqlite_key") || pmc->isset("auth_is_bot") ||
++      (context->is_new() && new_nonempty) ||
++      (!context->is_new() && (!personal_authorized(*pmc) || !config_codecs_valid(*config) ||
++                              !identity_pair_valid(*pmc, *config)))) {
++    return promise.set_error(refused());
++  }
++  // No SQL initialization/key generation/conversion, mkdir, repair or retry.
++  // Per-PMC-value semantic/format audit remains an explicit integration blocker;
++  // this draft's checks do not certify all native values or an account engine.
++  TRY_STATUS_PROMISE(promise, context->finish_open());
++  auto concurrent_pmc = std::make_shared<BinlogKeyValue<ConcurrentBinlog>>();
++  concurrent_pmc->external_init_begin(pmc->get_magic());
++  concurrent_pmc->external_init_handle(std::move(*pmc));
++  auto concurrent_config = std::make_shared<BinlogKeyValue<ConcurrentBinlog>>();
++  concurrent_config->external_init_begin(config->get_magic());
++  concurrent_config->external_init_handle(std::move(*config));
++  pmc.reset(); config.reset(); binlog.reset();
++  auto concurrent = std::make_shared<ConcurrentBinlog>(std::move(owner));
++  concurrent_pmc->external_init_finish(concurrent);
++  concurrent_config->external_init_finish(concurrent);
++  auto db = make_unique<TdDb>();
++  db->parameters_ = std::move(parameters);
++  db->binlog_pmc_ = std::move(concurrent_pmc);
++  db->config_pmc_ = std::move(concurrent_config);
++  db->binlog_ = std::move(concurrent);
++  result.database = std::move(db);
++  failure.dismiss();
++  promise.set_value(std::move(result));
++}
++TdDb::TdDb() = default;
++TdDb::~TdDb() { LOG_IF(ERROR, binlog_ != nullptr) << "TGCLI_G1_DATABASE_NOT_CLOSED"; }
++Status TdDb::check_parameters(Parameters &parameters) {
++  if (!parameters.g1_context_) { return refused(); }
++  return parameters.g1_context_->prepare_open(parameters.encryption_key_, parameters.database_directory_,
++      parameters.files_directory_, parameters.is_test_dc_, parameters.use_file_database_,
++      parameters.use_chat_info_database_, parameters.use_message_database_);
++}
++DbKey TdDb::as_db_key(string key) { return DbKey::raw_key(std::move(key)); }
++void TdDb::change_key(DbKey, Promise<> promise) {
++  promise.set_error(Status::Error(400, "TGCLI_G1_BINLOG_KEY_ROTATION_REFUSED"));
++}
++Status TdDb::destroy(const Parameters &parameters) {
++  if (parameters.g1_context_) { parameters.g1_context_->stop(); }
++  return Status::Error(400, "TGCLI_G1_DESTRUCTION_REFUSED");
++}
++void TdDb::with_db_path(const std::function<void(CSlice)> &callback) {
++  CHECK(binlog_); callback(binlog_->get_path());
++}
++Result<string> TdDb::get_stats() { return Status::Error(400, "TGCLI_G1_SQLITE_DISABLED"); }
++Status TdDb::initialize_g1_new_main_dc(int32 actual_main_dc) {
++  auto context = parameters_.g1_context_;
++  if (!context || !context->is_new() ||
++      context->state() != g1::StorageContext::State::AwaitingAuthorization ||
++      !context->validate() || !binlog_pmc_ || !binlog_ ||
++      !personal_identity_valid(*binlog_pmc_) || actual_main_dc < 1 || actual_main_dc > 1000) {
++    return refused();
++  }
++  // Caller holds the native dispatcher mutex through this whole operation.
++  // Existing native state is checked, never canonicalized/repaired/overwritten.
++  const auto canonical = std::to_string(actual_main_dc);
++  if (binlog_pmc_->isset("main_dc_id")) {
++    return binlog_pmc_->get("main_dc_id") == canonical ? Status::OK() : refused();
++  }
++  binlog_pmc_->set("main_dc_id", canonical);
+   return Status::OK();
+ }
+ 
+-void TdDb::open(int32 scheduler_id, Parameters parameters, Promise<OpenedDatabase> &&promise) {
+-  Scheduler::instance()->run_on_scheduler(
+-      scheduler_id, [parameters = std::move(parameters), promise = std::move(promise)](Unit) mutable {
+-        TdDb::open_impl(std::move(parameters), std::move(promise));
+-      });
+-}
+-
+-void TdDb::open_impl(Parameters parameters, Promise<OpenedDatabase> &&promise) {
+-  TRY_STATUS_PROMISE(promise, check_parameters(parameters));
+-
+-  OpenedDatabase result;
+-
+-  // Init pmc
+-  Binlog *binlog_ptr = nullptr;
+-  auto binlog = std::shared_ptr<Binlog>(new Binlog, [&](Binlog *ptr) { binlog_ptr = ptr; });
+-
+-  auto binlog_pmc = make_unique<BinlogKeyValue<Binlog>>();
+-  auto config_pmc = make_unique<BinlogKeyValue<Binlog>>();
+-  binlog_pmc->external_init_begin(static_cast<int32>(LogEvent::HandlerType::BinlogPmcMagic));
+-  config_pmc->external_init_begin(static_cast<int32>(LogEvent::HandlerType::ConfigPmcMagic));
+-
+-  bool encrypt_binlog = !parameters.encryption_key_.is_empty();
+-  VLOG(td_init) << "Start binlog loading";
+-  TRY_STATUS_PROMISE(promise, init_binlog(*binlog, get_binlog_path(parameters), *binlog_pmc, *config_pmc, result,
+-                                          std::move(parameters.encryption_key_)));
+-  VLOG(td_init) << "Finish binlog loading";
+-
+-  binlog_pmc->external_init_finish(binlog);
+-  VLOG(td_init) << "Finish initialization of binlog PMC";
+-  config_pmc->external_init_finish(binlog);
+-  VLOG(td_init) << "Finish initialization of config PMC";
+-
+-  if (parameters.use_file_database_ && binlog_pmc->get("auth").empty()) {
+-    LOG(INFO) << "Destroy SQLite database, because wasn't authorized yet";
+-    SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
+-  }
+-
+-  DbKey new_sqlite_key;
+-  DbKey old_sqlite_key;
+-  bool encrypt_sqlite = encrypt_binlog;
+-  bool drop_sqlite_key = false;
+-  auto sqlite_key = binlog_pmc->get("sqlite_key");
+-  if (encrypt_sqlite) {
+-    if (sqlite_key.empty()) {
+-      sqlite_key = string(32, ' ');
+-      Random::secure_bytes(sqlite_key);
+-      binlog_pmc->set("sqlite_key", sqlite_key);
+-      if (parameters.use_file_database_) {
+-        binlog_pmc->force_sync(Auto(), "TdDb::open_impl 1");
+-      }
+-    }
+-    new_sqlite_key = DbKey::raw_key(std::move(sqlite_key));
+-  } else {
+-    if (!sqlite_key.empty()) {
+-      old_sqlite_key = DbKey::raw_key(std::move(sqlite_key));
+-      drop_sqlite_key = true;
+-    }
+-  }
+-  VLOG(td_init) << "Start to init database";
+-  auto db = make_unique<TdDb>();
+-  auto init_sqlite_status = db->init_sqlite(parameters, new_sqlite_key, old_sqlite_key, *binlog_pmc);
+-  VLOG(td_init) << "Finish to init database";
+-  if (init_sqlite_status.is_error()) {
+-    LOG(ERROR) << "Destroy bad SQLite database because of " << init_sqlite_status;
+-    if (db->sql_connection_ != nullptr) {
+-      db->sql_connection_->get().close();
+-    }
+-    SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
+-    init_sqlite_status = db->init_sqlite(parameters, new_sqlite_key, old_sqlite_key, *binlog_pmc);
+-    if (init_sqlite_status.is_error()) {
+-      return promise.set_error(400, init_sqlite_status.message());
+-    }
+-  }
+-  if (drop_sqlite_key) {
+-    binlog_pmc->erase("sqlite_key");
+-    binlog_pmc->force_sync(Auto(), "TdDb::open_impl 2");
+-  }
+-
+-  VLOG(td_init) << "Create concurrent_binlog_pmc";
+-  auto concurrent_binlog_pmc = std::make_shared<BinlogKeyValue<ConcurrentBinlog>>();
+-  concurrent_binlog_pmc->external_init_begin(binlog_pmc->get_magic());
+-  concurrent_binlog_pmc->external_init_handle(std::move(*binlog_pmc));
+-
+-  VLOG(td_init) << "Create concurrent_config_pmc";
+-  auto concurrent_config_pmc = std::make_shared<BinlogKeyValue<ConcurrentBinlog>>();
+-  concurrent_config_pmc->external_init_begin(config_pmc->get_magic());
+-  concurrent_config_pmc->external_init_handle(std::move(*config_pmc));
+-
+-  binlog.reset();
+-  binlog_pmc.reset();
+-  config_pmc.reset();
+-
+-  CHECK(binlog_ptr != nullptr);
+-  VLOG(td_init) << "Create concurrent_binlog";
+-  auto concurrent_binlog = std::make_shared<ConcurrentBinlog>(unique_ptr<Binlog>(binlog_ptr));
+-
+-  VLOG(td_init) << "Init concurrent_binlog_pmc";
+-  concurrent_binlog_pmc->external_init_finish(concurrent_binlog);
+-  VLOG(td_init) << "Init concurrent_config_pmc";
+-  concurrent_config_pmc->external_init_finish(concurrent_binlog);
+-
+-  LOG(INFO) << "Successfully inited database in directory " << parameters.database_directory_ << " and files directory "
+-            << parameters.files_directory_;
+-
+-  db->parameters_ = std::move(parameters);
+-  db->binlog_pmc_ = std::move(concurrent_binlog_pmc);
+-  db->config_pmc_ = std::move(concurrent_config_pmc);
+-  db->binlog_ = std::move(concurrent_binlog);
+-
+-  result.database = std::move(db);
+-
+-  promise.set_value(std::move(result));
+-}
+-
+-TdDb::TdDb() = default;
+-
+-TdDb::~TdDb() {
+-  LOG_IF(ERROR, binlog_ != nullptr) << "Failed to close the database";
+-}
+-
+-Status TdDb::check_parameters(Parameters &parameters) {
+-  if (parameters.database_directory_.empty()) {
+-    parameters.database_directory_ = ".";
+-  }
+-  if (parameters.use_message_database_ && !parameters.use_chat_info_database_) {
+-    parameters.use_chat_info_database_ = true;
+-  }
+-  if (parameters.use_chat_info_database_ && !parameters.use_file_database_) {
+-    parameters.use_file_database_ = true;
+-  }
+-
+-  auto prepare_dir = [](string dir) -> Result<string> {
+-    CHECK(!dir.empty());
+-    if (dir.back() != TD_DIR_SLASH) {
+-      dir += TD_DIR_SLASH;
+-    }
+-    TRY_STATUS(mkpath(dir, 0750));
+-    TRY_RESULT(real_dir, realpath(dir, true));
+-    if (real_dir.empty()) {
+-      return Status::Error(PSTRING() << "Failed to get realpath for \"" << dir << '"');
+-    }
+-    if (real_dir.back() != TD_DIR_SLASH) {
+-      real_dir += TD_DIR_SLASH;
+-    }
+-    return real_dir;
+-  };
+-
+-  auto r_database_directory = prepare_dir(parameters.database_directory_);
+-  if (r_database_directory.is_error()) {
+-    VLOG(td_init) << "Invalid database directory";
+-    return Status::Error(400, PSLICE() << "Can't init database in the directory \"" << parameters.database_directory_
+-                                       << "\": " << r_database_directory.error());
+-  }
+-  parameters.database_directory_ = r_database_directory.move_as_ok();
+-
+-  if (parameters.files_directory_.empty()) {
+-    parameters.files_directory_ = parameters.database_directory_;
+-  } else {
+-    auto r_files_directory = prepare_dir(parameters.files_directory_);
+-    if (r_files_directory.is_error()) {
+-      VLOG(td_init) << "Invalid files directory";
+-      return Status::Error(400, PSLICE() << "Can't init files directory \"" << parameters.files_directory_
+-                                         << "\": " << r_files_directory.error());
+-    }
+-    parameters.files_directory_ = r_files_directory.move_as_ok();
+-  }
+-
+-  return Status::OK();
+-}
+-
+-DbKey TdDb::as_db_key(string key) {
+-  if (key.empty()) {
+-    return DbKey::raw_key("cucumber");
+-  }
+-  return DbKey::raw_key(std::move(key));
+-}
+-
+-void TdDb::change_key(DbKey key, Promise<> promise) {
+-  get_binlog()->change_key(std::move(key), std::move(promise));
+-}
+-
+-Status TdDb::destroy(const Parameters &parameters) {
+-  SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
+-  Binlog::destroy(get_binlog_path(parameters)).ignore();
+-  return Status::OK();
+-}
+-
+-void TdDb::with_db_path(const std::function<void(CSlice)> &callback) {
+-  SqliteDb::with_db_path(get_sqlite_path(parameters_), callback);
+-  CHECK(binlog_ != nullptr);
+-  callback(binlog_->get_path());
+-}
+-
+-Result<string> TdDb::get_stats() {
+-  auto sb = StringBuilder({}, true);
+-  auto &sql = sql_connection_->get();
+-  auto run_query = [&](CSlice query, Slice desc) -> Status {
+-    TRY_RESULT(stmt, sql.get_statement(query));
+-    TRY_STATUS(stmt.step());
+-    CHECK(stmt.has_row());
+-    auto key_size = stmt.view_int64(0);
+-    auto value_size = stmt.view_int64(1);
+-    auto count = stmt.view_int64(2);
+-    sb << query << "\n";
+-    sb << desc << ":\n";
+-    sb << format::as_size(key_size + value_size) << "\t";
+-    sb << format::as_size(key_size) << "\t";
+-    sb << format::as_size(value_size) << "\t";
+-    sb << format::as_size((key_size + value_size) / (count ? count : 1)) << "\t";
+-    sb << "\n";
+-    return Status::OK();
+-  };
+-  auto run_kv_query = [&](Slice mask, Slice table = Slice("common")) {
+-    return run_query(PSLICE() << "SELECT SUM(length(k)), SUM(length(v)), COUNT(*) FROM " << table << " WHERE k like '"
+-                              << mask << "'",
+-                     PSLICE() << table << ":" << mask);
+-  };
+-  TRY_STATUS(run_query("SELECT 0, SUM(length(data)), COUNT(*) FROM stories WHERE 1", "stories"));
+-  TRY_STATUS(run_query("SELECT 0, SUM(length(data)), COUNT(*) FROM messages WHERE 1", "messages"));
+-  TRY_STATUS(run_query("SELECT 0, SUM(length(data)), COUNT(*) FROM dialogs WHERE 1", "dialogs"));
+-  TRY_STATUS(run_kv_query("%", "common"));
+-  TRY_STATUS(run_kv_query("%", "files"));
+-  TRY_STATUS(run_kv_query("wp%"));
+-  TRY_STATUS(run_kv_query("wpurl%"));
+-  TRY_STATUS(run_kv_query("wpiv%"));
+-  TRY_STATUS(run_kv_query("us%"));
+-  TRY_STATUS(run_kv_query("ch%"));
+-  TRY_STATUS(run_kv_query("ss%"));
+-  TRY_STATUS(run_kv_query("gr%"));
+-
+-  vector<int32> prev(1);
+-  size_t count = 0;
+-  int32 max_bad_to = 0;
+-  size_t bad_count = 0;
+-  file_db_->pmc().get_by_range("file0", "file:", [&](Slice key, Slice value) {
+-    if (value.substr(0, 2) != "@@") {
+-      return true;
+-    }
+-    count++;
+-    auto from = to_integer<int32>(key.substr(4));
+-    auto to = to_integer<int32>(value.substr(2));
+-    if (from <= to) {
+-      LOG(DEBUG) << "Have forward reference from " << from << " to " << to;
+-      if (to > max_bad_to) {
+-        max_bad_to = to;
+-      }
+-      bad_count++;
+-      return true;
+-    }
+-    if (static_cast<size_t>(from) >= prev.size()) {
+-      prev.resize(from + 1);
+-    }
+-    if (static_cast<size_t>(to) >= prev.size()) {
+-      prev.resize(to + 1);
+-    }
+-    prev[from] = to;
+-    return true;
+-  });
+-  for (size_t i = 1; i < prev.size(); i++) {
+-    if (!prev[i]) {
+-      continue;
+-    }
+-    prev[i] = prev[prev[i]] + 1;
+-  }
+-  sb << "Max file database depth out of " << prev.size() << '/' << count
+-     << " elements: " << *std::max_element(prev.begin(), prev.end()) << "\n";
+-  sb << "Have " << bad_count << " forward references with maximum reference to " << max_bad_to;
+-
+-  return sb.as_cslice().str();
+-}
+-
+-}  // namespace td
++void TdDb::seal_authorized(Promise<AuthorizationSealResult> promise) {
++  using Store = BinlogKeyValue<ConcurrentBinlog>;
++  auto context = parameters_.g1_context_;
++  if (!context || !binlog_pmc_ || !config_pmc_ || !binlog_ || !context->validate() ||
++      context->state() != g1::StorageContext::State::AwaitingAuthorization) {
++    if (context) { context->stop(); }
++    return promise.set_error(refused());
++  }
++  auto captured = Store::try_snapshot_pair(binlog_pmc_, config_pmc_);
++  if (captured.is_error()) {
++    captured.move_as_error().ignore(); context->stop(); return promise.set_error(refused());
++  }
++  auto views = captured.move_as_ok();
++  if (!views) { return promise.set_value(AuthorizationSealResult::Busy); }
++  if (!personal_authorized(views.first) || !config_codecs_valid(views.second) ||
++      !identity_pair_valid(views.first, views.second)) {
++    views = Store::SnapshotPair(); // No outward callbacks while any guard is held.
++    context->stop(); return promise.set_error(refused());
++  }
++  const auto pmc_stamp = views.first.stamp(), config_stamp = views.second.stamp();
++  const auto generation = context->generation();
++  views = Store::SnapshotPair(); // Release BOTH guards before native actor sync.
++  binlog_->force_sync_handoff(PromiseCreator::lambda(
++      [context = std::move(context), generation, pmc = binlog_pmc_, config = config_pmc_, writer = binlog_,
++       pmc_stamp, config_stamp, promise = std::move(promise)](Result<Unit> synced) mutable {
++        // This success continuation is invoked by an explicitly deferred turn on
++        // the actual binlog actor, not inline or on the separately running Td actor.
++        if (synced.is_error()) { synced.move_as_error().ignore(); context->stop(); return promise.set_error(refused()); }
++        auto finalized = [&]() -> Result<AuthorizationSealResult> {
++          if (!writer || generation != context->generation() || !context->validate() ||
++              context->state() != g1::StorageContext::State::AwaitingAuthorization) { return refused(); }
++          TRY_RESULT(final_views, Store::try_snapshot_pair(pmc, config));
++          if (!final_views) { return AuthorizationSealResult::Busy; }
++          if (!final_views.first.matches(pmc_stamp) || !final_views.second.matches(config_stamp)) {
++            return AuthorizationSealResult::Changed;
++          }
++          if (!personal_authorized(final_views.first) || !config_codecs_valid(final_views.second) ||
++              !identity_pair_valid(final_views.first, final_views.second)) { return refused(); }
++          // Fixed native-only continuation: no G(), actor wait or external callback.
++          // Writer maintenance is excluded by this actor's serialization. Native
++          // Ready is the guarded internal authority point, NOT full schema acceptance.
++          TRY_STATUS(context->seal_after_authorization_sync());
++          return AuthorizationSealResult::Ready;
++        }(); // All borrowed guards are gone before the outward result is completed.
++        if (finalized.is_error()) { finalized.move_as_error().ignore(); context->stop(); return promise.set_error(refused()); }
++        promise.set_value(finalized.move_as_ok());
++      }), "TGCLI_G1_FIRST_AUTHORIZATION");
++}
++} // namespace td
+--- a/td/telegram/AuthManager.cpp
++++ b/td/telegram/AuthManager.cpp
+@@ -367,6 +367,9 @@
+ }
+ 
+ void AuthManager::start_up() {
++  if (td_->td_options_.g1_context && (state_ == State::LoggingOut || state_ == State::DestroyingKeys)) {
++    return td_->stop_g1();
++  }
+   if (state_ == State::LoggingOut) {
+     send_log_out_query();
+   } else if (state_ == State::DestroyingKeys) {
+@@ -930,6 +933,7 @@
+ }
+ 
+ void AuthManager::log_out(uint64 query_id) {
++  if (td_->td_options_.g1_context) { return td_->stop_g1(); }
+   if (state_ == State::Closing) {
+     return on_query_error(query_id, Status::Error(400, "Already logged out"));
+   }
+@@ -952,6 +956,7 @@
+ }
+ 
+ void AuthManager::send_log_out_query() {
++  if (td_->td_options_.g1_context) { return td_->stop_g1(); }
+   // we can lose authorization while logging out, but still may need to resend the request,
+   // so we pretend that it doesn't require authorization
+   auto query = G()->net_query_creator().create_unauth(telegram_api::auth_logOut());
+@@ -960,6 +965,7 @@
+ }
+ 
+ void AuthManager::delete_account(uint64 query_id, string reason, string password) {
++  if (td_->td_options_.g1_context) { return td_->stop_g1(); }
+   if (state_ != State::Ok && state_ != State::WaitPassword) {
+     return on_query_error(query_id, Status::Error(400, "Need to log in first"));
+   }
+@@ -1432,6 +1438,7 @@
+ }
+ 
+ void AuthManager::on_authorization_lost(string source) {
++  if (td_->td_options_.g1_context) { return td_->stop_g1(); }
+   if (state_ == State::LoggingOut && net_query_type_ == NetQueryType::LogOut) {
+     LOG(INFO) << "Ignore authorization loss because of " << source << ", while logging out";
+     return;
+@@ -1448,6 +1455,7 @@
+ }
+ 
+ void AuthManager::destroy_auth_keys() {
++  if (td_->td_options_.g1_context) { return td_->stop_g1(); }
+   if (state_ == State::Closing || state_ == State::DestroyingKeys) {
+     LOG(INFO) << "Already destroying auth keys";
+     return;
+@@ -1517,9 +1525,8 @@
+     }
+   }
+   td_->user_manager_->on_get_user(std::move(auth->user_), "on_get_authorization");
+-  update_state(State::Ok);
+-  td_->messages_manager_->on_authorization_success();
+   if (!td_->user_manager_->get_my_id().is_valid()) {
++    if (td_->td_options_.g1_context) { return td_->stop_g1(); }
+     LOG(ERROR) << "Server didsn't send proper authorization: " << debug;
+     save_app_log(td_, "tdlib.auth", DialogId(static_cast<int64>(1)),
+                  telegram_api::make_object<telegram_api::jsonString>(debug), Promise<Unit>());
+@@ -1527,6 +1534,9 @@
+     log_out(0);
+     return;
+   }
++  // Do not publish authorization-ready before validating native self identity.
++  update_state(State::Ok);
++  td_->messages_manager_->on_authorization_success();
+   if (auth->tmp_sessions_ > 0) {
+     td_->option_manager_->set_option_integer("session_count", auth->tmp_sessions_);
+   }
+--- a/example/java/org/drinkless/tdlib/Client.java
++++ b/example/java/org/drinkless/tdlib/Client.java
+@@ -17,7 +17,7 @@
+         try {
+             System.loadLibrary("tdjni");
+         } catch (UnsatisfiedLinkError e) {
+-            e.printStackTrace();
++            throw new ExceptionInInitializerError("TGCLI_G1_NATIVE_LOAD_REFUSED");
+         }
+     }
+ 
+@@ -137,7 +137,49 @@
+      * @return created Client
+      */
+     public static Client create(ResultHandler updateHandler, ExceptionHandler updateExceptionHandler, ExceptionHandler defaultExceptionHandler) {
+-        Client client = new Client(updateHandler, updateExceptionHandler, defaultExceptionHandler);
++        return startReceiver(new Client(updateHandler, updateExceptionHandler, defaultExceptionHandler));
++    }
++
++    /**
++     * Private Telegram-CLI G1 extension. The native-owned handle is single-use,
++     * bound to this worker generation; it is never a pointer, fd or key. A trusted
++     * native factory under the profile lease must mint it. No implicit NEW.
++     * An unaccepted integration build refuses before constructing a client.
++     */
++    public static Client createWithContext(long contextHandle, String generation, ResultHandler updateHandler,
++                                          ExceptionHandler updateExceptionHandler, ExceptionHandler defaultExceptionHandler) {
++        if (contextHandle <= 0 || generation == null) {
++            throw new IllegalArgumentException("TGCLI_G1_CONTEXT_REFUSED");
++        }
++        return startReceiver(new Client(updateHandler, updateExceptionHandler, defaultExceptionHandler,
++                                        contextHandle, generation));
++    }
++
++    /**
++     * Private worker bridge. The caller must own a live Java profile lease and
++     * independently retained directories, and supply its one-use checked identity.
++     * Device/inode are opaque 64-bit patterns, not credentials or record authority.
++     * Native comparison precedes NEW effects; NEW intent is explicit, never inferred.
++     * The unaccepted draft refuses before any filesystem effects. No client is made.
++     */
++    public static long prepareStorageContext(String profilePath, String profileName, String generation,
++                                             long device, long inode, boolean isNew, boolean testDc) {
++        if (profilePath == null || profileName == null || generation == null) {
++            throw new IllegalArgumentException("TGCLI_G1_CONTEXT_REFUSED");
++        }
++        return prepareNativeStorageContext(profilePath, profileName, generation, device, inode, isNew, testDc);
++    }
++
++    /**
++     * True ONLY acknowledges abandoning a matching still-unbound native handle.
++     * False/unknown/already-consumed is NOT evidence that a client's native lifetime
++     * has ended. Never use this as a substitute for actual native Closed after bind.
++     */
++    public static boolean abandonStorageContext(long contextHandle, String generation) {
++        return abandonNativeStorageContext(contextHandle, generation);
++    }
++
++    private static Client startReceiver(Client client) {
+         synchronized (responseReceiver) {
+             if (!responseReceiver.isRun) {
+                 responseReceiver.isRun = true;
+@@ -236,8 +278,14 @@
+     }
+ 
+     private Client(ResultHandler updateHandler, ExceptionHandler updateExceptionHandler, ExceptionHandler defaultExceptionHandler) {
++        this(updateHandler, updateExceptionHandler, defaultExceptionHandler, 0, null);
++    }
++
++    private Client(ResultHandler updateHandler, ExceptionHandler updateExceptionHandler, ExceptionHandler defaultExceptionHandler,
++                   long contextHandle, String generation) {
++        nativeClientId = contextHandle == 0 ? createNativeClient() : createNativeClientWithContext(contextHandle, generation);
++        if (nativeClientId <= 0) { throw new IllegalStateException("TGCLI_G1_CONTEXT_REFUSED"); }
+         clientCount.incrementAndGet();
+-        nativeClientId = createNativeClient();
+         if (updateHandler != null) {
+             updateHandlers.put(nativeClientId, new Handler(updateHandler, updateExceptionHandler));
+         }
+@@ -249,6 +297,13 @@
+ 
+     private static native int createNativeClient();
+ 
++    private static native int createNativeClientWithContext(long contextHandle, String generation);
++
++    private static native long prepareNativeStorageContext(String profilePath, String profileName, String generation,
++                                                           long device, long inode, boolean isNew, boolean testDc);
++
++    private static native boolean abandonNativeStorageContext(long contextHandle, String generation);
++
+     private static native void nativeClientSend(int nativeClientId, long eventId, TdApi.Function function);
+ 
+     private static native int nativeClientReceive(int[] clientIds, long[] eventIds, TdApi.Object[] events, double timeout);
+--- a/example/java/td_jni.cpp
++++ b/example/java/td_jni.cpp
+@@ -8,6 +8,7 @@
+ #include <td/telegram/td_json_client.h>
+ #else
+ #include <td/telegram/Client.h>
++#include <td/telegram/g1/g1-storage-context.h>
+ #include <td/telegram/td_api.h>
+ #endif
+ 
+@@ -60,6 +61,66 @@
+ 
+ static jint Client_createNativeClient(JNIEnv *env, jclass clazz) {
+   return static_cast<jint>(get_manager()->create_client_id());
++}
++
++// Compile-time draft fence, NOT an environment flag or runtime override.
++static constexpr bool integrated_engine_accepted = false;
++
++static void context_error(JNIEnv *env, const char *marker) {
++  jclass error = env->FindClass("java/lang/IllegalStateException");
++  if (error) { env->ThrowNew(error, marker); env->DeleteLocalRef(error); }
++}
++
++static jlong Client_prepareNativeStorageContext(JNIEnv *env, jclass clazz, jstring profile_path,
++                                                jstring profile_name, jstring generation,
++                                                jlong device, jlong inode, jboolean is_new, jboolean test_dc) {
++  // Refuse before ANY filesystem effects in an unaccepted candidate.
++  if (!integrated_engine_accepted) { context_error(env, "TGCLI_G1_INTEGRATION_NOT_ACCEPTED"); return 0; }
++  if (!profile_path || !profile_name || !generation) { context_error(env, "TGCLI_G1_CONTEXT_REFUSED"); return 0; }
++  auto path = td::jni::from_jstring(env, profile_path);
++  auto name = td::jni::from_jstring(env, profile_name);
++  auto epoch = td::jni::from_jstring(env, generation);
++  if (env->ExceptionCheck()) { return 0; }
++  namespace g1 = telegram_cli::native_g1;
++  auto created = g1::StorageContext::create_attested(
++      std::move(path), std::move(name), std::move(epoch),
++      is_new ? g1::StorageContext::Intent::New : g1::StorageContext::Intent::Existing,
++      test_dc != JNI_FALSE, static_cast<std::uint64_t>(device), static_cast<std::uint64_t>(inode));
++  if (created.is_error()) { created.move_as_error().ignore(); context_error(env, "TGCLI_G1_CONTEXT_REFUSED"); return 0; }
++  auto context = created.move_as_ok();
++  auto handle = g1::publish_context_handle(context);
++  if (handle <= 0) { context->stop(); context_error(env, "TGCLI_G1_CONTEXT_REFUSED"); }
++  return static_cast<jlong>(handle);
++}
++
++static jboolean Client_abandonNativeStorageContext(JNIEnv *env, jclass clazz, jlong handle, jstring generation) {
++  if (handle <= 0 || !generation) { return JNI_FALSE; }
++  auto epoch = td::jni::from_jstring(env, generation);
++  if (env->ExceptionCheck()) { return JNI_FALSE; }
++  return telegram_cli::native_g1::abandon_context_handle(static_cast<std::int64_t>(handle), epoch)
++      ? JNI_TRUE : JNI_FALSE;
++}
++
++static jint Client_createNativeClientWithContext(JNIEnv *env, jclass clazz, jlong handle, jstring generation) {
++  namespace g1 = telegram_cli::native_g1;
++  auto context = g1::take_context_handle(static_cast<std::int64_t>(handle), td::jni::from_jstring(env, generation));
++  // Deliberate draft activation fence, not a runtime override. Native per-value
++  // schema/actor acceptance and whole-engine execution approval are still pending.
++  if (!context || !integrated_engine_accepted) {
++    if (context) { context->stop(); }
++    jclass error = env->FindClass("java/lang/IllegalStateException");
++    if (error) {
++      env->ThrowNew(error, "TGCLI_G1_INTEGRATION_NOT_ACCEPTED");
++      env->DeleteLocalRef(error);
++    }
++    return 0;
++  }
++  auto id = get_manager()->create_client_id(std::move(context));
++  if (id <= 0) {
++    jclass error = env->FindClass("java/lang/IllegalStateException");
++    if (error) { env->ThrowNew(error, "TGCLI_G1_CONTEXT_REFUSED"); env->DeleteLocalRef(error); }
++  }
++  return static_cast<jint>(id);
+ }
+ 
+ static void Client_nativeClientSend(JNIEnv *env, jclass clazz, jint client_id, jlong id, jobject function) {
+@@ -214,6 +275,10 @@
+ #define TD_OBJECT "L" PACKAGE_NAME "/TdApi$Object;"
+ #define TD_FUNCTION "L" PACKAGE_NAME "/TdApi$Function;"
+   register_method(client_class, "createNativeClient", "()I", Client_createNativeClient);
++  register_method(client_class, "createNativeClientWithContext", "(JLjava/lang/String;)I", Client_createNativeClientWithContext);
++  register_method(client_class, "prepareNativeStorageContext", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZZ)J",
++                  Client_prepareNativeStorageContext);
++  register_method(client_class, "abandonNativeStorageContext", "(JLjava/lang/String;)Z", Client_abandonNativeStorageContext);
+   register_method(client_class, "nativeClientSend", "(IJ" TD_FUNCTION ")V", Client_nativeClientSend);
+   register_method(client_class, "nativeClientReceive", "([I[J[" TD_OBJECT "D)I", Client_nativeClientReceive);
+   register_method(client_class, "nativeClientExecute", "(" TD_FUNCTION ")" TD_OBJECT, Client_nativeClientExecute);
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -677,6 +677,8 @@
+   td/telegram/TargetDialogTypes.cpp
+   td/telegram/Td.cpp
+   td/telegram/TdDb.cpp
++  td/telegram/g1/g1-storage-context.cpp
++  td/telegram/g1/binlog-only-policy.cpp
+   td/telegram/TempPasswordState.cpp
+   td/telegram/TermsOfService.cpp
+   td/telegram/TermsOfServiceManager.cpp
+--- a/td/telegram/net/NetQueryDispatcher.cpp
++++ b/td/telegram/net/NetQueryDispatcher.cpp
+@@ -447,6 +447,14 @@
+   G()->td_db()->get_binlog_pmc()->set("main_dc_id", to_string(main_dc_id_.load(std::memory_order_relaxed)));
+ }
+ 
++Status NetQueryDispatcher::initialize_g1_new_main_dc() {
++  std::lock_guard<std::mutex> guard(mutex_);
++  if (stop_flag_.load(std::memory_order_relaxed)) {
++    return Status::Error(400, "TGCLI_G1_NATIVE_ADMISSION_REFUSED");
++  }
++  return G()->td_db()->initialize_g1_new_main_dc(main_dc_id_.load(std::memory_order_relaxed));
++}
++
+ void NetQueryDispatcher::check_authorization_is_ok() {
+   std::lock_guard<std::mutex> guard(mutex_);
+   if (stop_flag_.load(std::memory_order_relaxed)) {
+--- a/td/telegram/net/NetQueryDispatcher.h
++++ b/td/telegram/net/NetQueryDispatcher.h
+@@ -55,6 +55,9 @@
+   }
+ 
+   void set_main_dc_id(int32 new_main_dc_id);
++  // G1 NEW-only initialization; snapshots and persists under the SAME mutex as
++  // native DC changes. No unlocked stale-ID overwrite and no EXISTING repair.
++  Status initialize_g1_new_main_dc();
+   void check_authorization_is_ok();
+ 
+   void set_verification_token(int64 verification_id, string &&token, Promise<Unit> &&promise);
+--- a/tddb/td/db/binlog/ConcurrentBinlog.cpp
++++ b/tddb/td/db/binlog/ConcurrentBinlog.cpp
+@@ -61,14 +61,31 @@
+     try_flush();
+   }
+ 
+-  void force_sync(Promise<> &&promise, const char *source) {
++  void force_sync(uint64 through_seq_no, Promise<> &&promise, const char *source) {
+     LOG(INFO) << "Force binlog sync from " << source;
+-    auto seq_no = processor_.max_unfinished_seq_no();
+-    if (processor_.max_finished_seq_no() == seq_no) {
++    // G1: the actor may not yet have RECEIVED a reserved event. Waiting only for
++    // its currently seen max_unfinished_seq_no can sync an older snapshot.
++    if (processor_.max_finished_seq_no() >= through_seq_no) {
+       do_immediate_sync(std::move(promise));
+     } else {
+-      immediate_sync_promises_.emplace(seq_no, std::move(promise));
+-    }
++      immediate_sync_promises_.emplace(through_seq_no, std::move(promise));
++    }
++  }
++
++  void force_sync_handoff(uint64 through_seq_no, Promise<> promise, const char *source) {
++    force_sync(through_seq_no, PromiseCreator::lambda(
++        [self = actor_id(this), promise = std::move(promise)](Result<Unit> synced) mutable {
++          if (synced.is_error()) { return promise.set_error(synced.move_as_error()); }
++          // Never finalize from an inline sync callback or while its producer
++          // still owns a KV lock. A later turn also serializes native maintenance.
++          send_closure_later(self, &BinlogActor::finish_sync_handoff, std::move(promise));
++        }), source);
++  }
++
++  void finish_sync_handoff(Promise<> promise) {
++    // Fixed native admission continuation executes in this actor's serial turn.
++    // Completing may destroy actor context: no member access follows it.
++    promise.set_value(Unit());
+   }
+ 
+   void force_flush() {
+@@ -207,7 +224,20 @@
+                info);
+ }
+ void ConcurrentBinlog::force_sync(Promise<> promise, const char *source) {
+-  send_closure(binlog_actor_, &detail::BinlogActor::force_sync, std::move(promise), source);
++  // Snapshot reservations at the caller, not only events already delivered to
++  // the storage actor. BinlogKeyValue reserves before publishing its map write,
++  // and queues the event after unlocking: such a reservation must be covered.
++  const auto next = last_event_id_.load(std::memory_order_acquire);
++  CHECK(next != 0);
++  send_closure(binlog_actor_, &detail::BinlogActor::force_sync, next - 1, std::move(promise), source);
++}
++
++void ConcurrentBinlog::force_sync_handoff(Promise<> promise, const char *source) {
++  // Same caller reservation watermark; no synthetic event-ID reservation.
++  const auto next = last_event_id_.load(std::memory_order_acquire);
++  CHECK(next != 0);
++  send_closure_later(binlog_actor_, &detail::BinlogActor::force_sync_handoff,
++                     next - 1, std::move(promise), source);
+ }
+ 
+ void ConcurrentBinlog::force_flush() {
+--- a/tddb/td/db/BinlogKeyValue.h
++++ b/tddb/td/db/BinlogKeyValue.h
+@@ -10,6 +10,7 @@
+ #include "td/db/binlog/BinlogEvent.h"
+ #include "td/db/DbKey.h"
+ #include "td/db/KeyValueSyncInterface.h"
++#include "td/db/G1KvWakeState.h"
+ 
+ #include "td/utils/buffer.h"
+ #include "td/utils/common.h"
+@@ -28,15 +29,200 @@
+ 
+ #include <functional>
+ #include <memory>
++#include <limits>
++#include <optional>
+ #include <unordered_map>
+ #include <utility>
+ 
+ namespace td {
++namespace detail {
++// Exhaustion is a failure, not a token wrap into a falsely matching snapshot.
++inline bool advance_key_value_revision(uint64 &revision) {
++  if (revision == std::numeric_limits<uint64>::max()) { return false; }
++  ++revision;
++  return true;
++}
++}  // namespace detail
+ 
+ template <class BinlogT>
+ class BinlogKeyValue final : public KeyValueSyncInterface {
+  public:
+   static constexpr int32 MAGIC = 0x2a280000;
++
++  BinlogKeyValue() = default;
++  BinlogKeyValue(const BinlogKeyValue &) = delete;
++  BinlogKeyValue &operator=(const BinlogKeyValue &) = delete;
++  // Lifecycle moves require quiescent callers. Never move the mutex or transfer
++  // an incarnation back into a previously captured origin (move-out/back ABA).
++  BinlogKeyValue(BinlogKeyValue &&other) { move_from(other); }
++  BinlogKeyValue &operator=(BinlogKeyValue &&other) {
++    if (this != &other) { move_from(other); }
++    return *this;
++  }
++
++  using WakeState = telegram_cli::native_g1::detail::KvWakeState;
++  using WriteGuard = telegram_cli::native_g1::detail::KvWakeGuard<RwMutex::WriteLock>;
++  using ReadGuard = telegram_cli::native_g1::detail::KvWakeGuard<RwMutex::ReadLock>;
++
++  // INTERNAL in-memory token, not filesystem identity or an account certificate.
++  // Retaining the incarnation prevents allocator address reuse from faking equality.
++  struct SnapshotStamp {
++    const void *origin = nullptr;
++    std::shared_ptr<const char> incarnation;
++    uint64 revision = 0;
++    bool operator==(const SnapshotStamp &other) const {
++      return origin == other.origin && incarnation == other.incarnation && revision == other.revision;
++    }
++  };
++
++  class Snapshot {
++   public:
++    Snapshot() = default; // Empty successful result = BUSY, never a usable view.
++    Snapshot(const Snapshot &) = delete;
++    Snapshot &operator=(const Snapshot &) = delete;
++    Snapshot(Snapshot &&) noexcept = default;
++    Snapshot &operator=(Snapshot &&other) noexcept {
++      if (this != &other) {
++        // Unlock BEFORE releasing the retained owner (including move assignment).
++        lock_.reset(); owner_.reset();
++        owner_ = std::move(other.owner_); lock_ = std::move(other.lock_); stamp_ = std::move(other.stamp_);
++      }
++      return *this;
++    }
++    explicit operator bool() const { return owner_ != nullptr && bool(lock_); }
++    const SnapshotStamp &stamp() const { return stamp_; }
++    bool matches(const SnapshotStamp &expected) const { return bool(*this) && stamp_ == expected; }
++    std::optional<Slice> find(Slice name) const {
++      CHECK(bool(*this));
++      std::optional<Slice> result;
++      // WaitFreeHashMap::get COPIES values. Use its const visitor instead; no
++      // private value copies and no recursive acquisition of the ordinary KV API.
++      const auto &map = owner_->map_;
++      map.foreach([&](const string &key, const std::pair<string, uint64> &value) {
++        if (Slice(key) == name) { result = Slice(value.first); }
++      });
++      return result;
++    }
++    Slice get(Slice name) const { return find(name).value_or(Slice()); }
++    bool isset(Slice name) const { return find(name).has_value(); }
++    void for_each(std::function<void(Slice, Slice)> func) const {
++      CHECK(bool(*this));
++      const auto &map = owner_->map_;
++      map.foreach([&](const string &key, const std::pair<string, uint64> &value) { func(key, value.first); });
++    }
++
++   private:
++    friend class BinlogKeyValue;
++    Snapshot(std::shared_ptr<BinlogKeyValue> owner, WriteGuard lock)
++        : owner_(std::move(owner)), lock_(std::move(lock)),
++          stamp_{owner_.get(), owner_->incarnation_, owner_->revision_} {}
++    // Reverse destruction order guarantees unlock before owner destruction.
++    std::shared_ptr<BinlogKeyValue> owner_;
++    WriteGuard lock_;
++    SnapshotStamp stamp_;
++  };
++
++  struct SnapshotPair {
++    Snapshot first, second;
++    explicit operator bool() const { return bool(first) && bool(second); }
++  };
++
++  // INTERNAL one-shot wake subscription. Its actor/poll observer MUST be removed
++  // before cancel/destruction. No callbacks occur here and cancel is not stop proof.
++  class WakeSubscription {
++   public:
++    WakeSubscription() = default;
++    WakeSubscription(const WakeSubscription &) = delete;
++    WakeSubscription &operator=(const WakeSubscription &) = delete;
++    WakeSubscription(WakeSubscription &&) noexcept = default;
++    WakeSubscription &operator=(WakeSubscription &&other) noexcept {
++      if (this != &other) {
++        cancel(); owner_ = std::move(other.owner_); registration_ = std::move(other.registration_);
++      }
++      return *this;
++    }
++    explicit operator bool() const { return owner_ != nullptr && bool(registration_); }
++    bool signalled() const { return registration_.signalled(); }
++    td::PollableFdInfo &poll_info() { return registration_.poll_info(); }
++    void drain() { registration_.drain(); }
++    void cancel() { registration_.cancel(); owner_.reset(); }
++   private:
++    friend class BinlogKeyValue;
++    WakeSubscription(std::shared_ptr<BinlogKeyValue> owner,
++        telegram_cli::native_g1::detail::KvWakeRegistration registration)
++        : owner_(std::move(owner)), registration_(std::move(registration)) {}
++    // Reverse destruction order drops registration BEFORE native owner.
++    std::shared_ptr<BinlogKeyValue> owner_;
++    telegram_cli::native_g1::detail::KvWakeRegistration registration_;
++  };
++
++  class BusyTicket {
++   public:
++    BusyTicket() = default;
++    BusyTicket(const BusyTicket &) = delete;
++    BusyTicket &operator=(const BusyTicket &) = delete;
++    BusyTicket(BusyTicket &&) noexcept = default;
++    BusyTicket &operator=(BusyTicket &&) noexcept = default;
++    explicit operator bool() const { return owner_ != nullptr; }
++    // Registration takes place AFTER all borrowed views have released. Activity
++    // epoch is not a snapshot stamp or storage/account identity.
++    Result<WakeSubscription> subscribe() && {
++      if (!owner_) { return Status::Error(400, "TGCLI_G1_WAKE_TICKET_INVALID"); }
++      auto owner = std::move(owner_); // One-use, including failure.
++      TRY_RESULT(registration, owner->wake_state_->subscribe_after(observed_));
++      return WakeSubscription(std::move(owner), std::move(registration));
++    }
++   private:
++    friend class BinlogKeyValue;
++    BusyTicket(std::shared_ptr<BinlogKeyValue> owner, uint64 observed)
++        : owner_(std::move(owner)), observed_(observed) {}
++    std::shared_ptr<BinlogKeyValue> owner_;
++    uint64 observed_ = 0;
++  };
++
++  struct ObservedSnapshotPair {
++    SnapshotPair views;
++    BusyTicket busy;
++    explicit operator bool() const { return bool(views); } // NOT native Ready.
++  };
++
++  // Views retain shared owners and borrow data ONLY until their guards release.
++  // Callers must not await sync, invoke ordinary KV methods or move the contained
++  // object while holding a view. Pair acquisition never blocks on either map.
++  static Result<Snapshot> try_snapshot(std::shared_ptr<BinlogKeyValue> owner) {
++    if (!owner) { return Status::Error(400, "TGCLI_G1_SNAPSHOT_OWNER_INVALID"); }
++    TRY_RESULT(raw_lock, owner->rw_mutex_.try_lock_write());
++    if (!raw_lock) { return Snapshot(); }
++    WriteGuard lock(owner->wake_state_, std::move(raw_lock));
++    if (!owner->snapshot_ready_ || !owner->incarnation_) {
++      return Status::Error(400, "TGCLI_G1_SNAPSHOT_LIFECYCLE_INVALID");
++    }
++    return Snapshot(std::move(owner), std::move(lock));
++  }
++  static Result<SnapshotPair> try_snapshot_pair(std::shared_ptr<BinlogKeyValue> first,
++                                                std::shared_ptr<BinlogKeyValue> second) {
++    if (!first || !second || first == second) { return Status::Error(400, "TGCLI_G1_SNAPSHOT_PAIR_INVALID"); }
++    TRY_RESULT(left, try_snapshot(std::move(first)));
++    if (!left) { return SnapshotPair(); }
++    TRY_RESULT(right, try_snapshot(std::move(second)));
++    if (!right) { return SnapshotPair(); } // left releases before caller sees BUSY.
++    return SnapshotPair{std::move(left), std::move(right)};
++  }
++
++  static Result<ObservedSnapshotPair> try_observed_snapshot_pair(std::shared_ptr<BinlogKeyValue> first,
++                                                                 std::shared_ptr<BinlogKeyValue> second) {
++    if (!first || !second || first == second) { return Status::Error(400, "TGCLI_G1_SNAPSHOT_PAIR_INVALID"); }
++    const auto first_epoch = first->wake_state_->observe(); // BEFORE failed probe.
++    TRY_RESULT(left, try_snapshot(first));
++    if (!left) { return ObservedSnapshotPair{SnapshotPair(), BusyTicket(std::move(first), first_epoch)}; }
++    const auto second_epoch = second->wake_state_->observe();
++    TRY_RESULT(right, try_snapshot(second));
++    if (!right) {
++      left = Snapshot(); // Unlock first; ticket watches ONLY contended second.
++      return ObservedSnapshotPair{SnapshotPair(), BusyTicket(std::move(second), second_epoch)};
++    }
++    return ObservedSnapshotPair{SnapshotPair{std::move(left), std::move(right)}, BusyTicket()};
++  }
+ 
+   struct Event final : public Storer {
+     Event() = default;
+@@ -79,22 +265,17 @@
+       magic_ = override_magic;
+     }
+ 
+-    binlog_ = std::make_shared<BinlogT>();
+-    TRY_STATUS(binlog_->init(
+-        name,
+-        [&](const BinlogEvent &binlog_event) {
+-          Event event;
+-          TlParser event_parser(binlog_event.get_data());
+-          event.parse(event_parser);
+-          event_parser.fetch_end();
+-          LOG_CHECK(event_parser.get_error() == nullptr) << event_parser.get_status();
+-          if (event.key.empty()) {
+-            LOG(ERROR) << "Have event with empty key";
+-            return;
+-          }
+-          map_.set(event.key.str(), std::make_pair(event.value.str(), binlog_event.id_));
+-        },
+-        std::move(db_key), DbKey::empty(), scheduler_id));
++    auto opened = std::make_shared<BinlogT>();
++    {
++      auto lock = write_guard();
++      binlog_ = opened;
++    }
++    TRY_STATUS(opened->init(name, [&](const BinlogEvent &event) { external_init_handle(event); },
++                            std::move(db_key), DbKey::empty(), scheduler_id));
++    {
++      auto lock = write_guard();
++      snapshot_ready_ = true;
++    }
+     return Status::OK();
+   }
+ 
+@@ -107,7 +288,19 @@
+ 
+   template <class OtherBinlogT>
+   void external_init_handle(BinlogKeyValue<OtherBinlogT> &&other) {
++    CHECK(static_cast<const void *>(this) != static_cast<const void *>(&other));
++    // Import/move is lifecycle work; neither snapshot may outlive either guard.
++    // A total address order avoids an inverse blocking acquisition on import.
++    WriteGuard first_lock, second_lock;
++    if (std::less<const void *>()(this, &other)) {
++      first_lock = write_guard(); second_lock = other.write_guard();
++    } else {
++      first_lock = other.write_guard(); second_lock = write_guard();
++    }
+     map_ = std::move(other.map_);
++    other.map_ = decltype(other.map_)();
++    reset_snapshot_incarnation();
++    other.reset_snapshot_incarnation();
+   }
+ 
+   void external_init_handle(const BinlogEvent &binlog_event) {
+@@ -120,27 +313,56 @@
+       LOG(ERROR) << "Have external event with empty key";
+       return;
+     }
++    auto lock = write_guard();
++    revise();
+     map_.set(event.key.str(), std::make_pair(event.value.str(), binlog_event.id_));
+   }
+ 
+   void external_init_finish(std::shared_ptr<BinlogT> binlog) {
+-    binlog_ = std::move(binlog);
++    CHECK(binlog != nullptr);
++    std::shared_ptr<BinlogT> released;
++    {
++      auto lock = write_guard();
++      released = std::move(binlog_);
++      binlog_ = std::move(binlog);
++      // A finished/rebound writer is a new lifecycle even if map bytes match.
++      reset_snapshot_incarnation();
++      snapshot_ready_ = true;
++    }
++    released.reset(); // Native owner destructors/callbacks never under map lock.
+   }
+ 
+   void close() {
+-    *this = BinlogKeyValue();
++    std::shared_ptr<BinlogT> released;
++    {
++      auto lock = write_guard();
++      reset_snapshot_incarnation();
++      map_ = decltype(map_)();
++      released = std::move(binlog_);
++      magic_ = MAGIC;
++    }
++    // Destroy/release native owners OUTSIDE the map lock: callbacks may be inline.
++    released.reset();
+   }
+   void close(Promise<> promise) final {
+-    binlog_->close(std::move(promise));
++    std::shared_ptr<BinlogT> closing;
++    {
++      auto lock = write_guard();
++      reset_snapshot_incarnation();
++      closing = binlog_;
++    }
++    if (!closing) { return promise.set_error(Status::Error(400, "TGCLI_G1_KV_CLOSE_INVALID")); }
++    closing->close(std::move(promise));
+   }
+ 
+   SeqNo set(string key, string value) final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     CHECK(!key.empty());
+     auto &it = map_[key];
+     if (it.second != 0 && it.first == value) {
+       return 0;
+     }
++    revise();
+     auto seq_no = binlog_->next_event_id();
+     bool rewrite = false;
+     if (it.second != 0) {
+@@ -160,13 +382,14 @@
+   }
+ 
+   SeqNo erase(const string &key) final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     if (map_.count(key) == 0) {
+       return 0;
+     }
+     auto &value = map_[key];
+     VLOG(binlog) << "Remove value of key " << key << ", which is " << hex_encode(value.first);
+     uint64 event_id = value.second;
++    revise();
+     map_.erase(key);
+     auto seq_no = binlog_->next_event_id();
+     lock.reset();
+@@ -176,11 +399,12 @@
+   }
+ 
+   SeqNo erase_batch(vector<string> keys) final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     vector<uint64> log_event_ids;
+     for (const auto &key : keys) {
+       if (map_.count(key) != 0) {
+         auto &value = map_[key];
++        if (log_event_ids.empty()) { revise(); }
+         log_event_ids.push_back(value.second);
+         map_.erase(key);
+       }
+@@ -197,12 +421,12 @@
+   }
+ 
+   bool isset(const string &key) final {
+-    auto lock = rw_mutex_.lock_read();
++    auto lock = read_guard();
+     return map_.count(key) > 0;
+   }
+ 
+   string get(const string &key) final {
+-    auto lock = rw_mutex_.lock_read();
++    auto lock = read_guard();
+     return map_.get(key).first;
+   }
+ 
+@@ -215,12 +439,12 @@
+   }
+ 
+   void for_each(std::function<void(Slice, Slice)> func) final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     map_.foreach([&func](const string &key, const std::pair<string, uint64> &value) { func(key, value.first); });
+   }
+ 
+   std::unordered_map<string, string, Hash<string>> prefix_get(Slice prefix) final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     std::unordered_map<string, string, Hash<string>> res;
+     map_.foreach([&res, prefix](const string &key, const std::pair<string, uint64> &value) {
+       if (begins_with(key, prefix)) {
+@@ -231,7 +455,7 @@
+   }
+ 
+   FlatHashMap<string, string> get_all() final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     FlatHashMap<string, string> res;
+     res.reserve(map_.calc_size());
+     map_.foreach([&res](const string &key, const std::pair<string, uint64> &value) { res.emplace(key, value.first); });
+@@ -239,10 +463,11 @@
+   }
+ 
+   void erase_by_prefix(Slice prefix) final {
+-    auto lock = rw_mutex_.lock_write();
++    auto lock = write_guard();
+     vector<uint64> event_ids;
+-    map_.remove_if([&event_ids, prefix](const auto &it) {
++    map_.remove_if([this, &event_ids, prefix](const auto &it) {
+       if (begins_with(it.first, prefix)) {
++        if (event_ids.empty()) { revise(); }
+         event_ids.push_back(it.second.second);
+         return true;
+       }
+@@ -265,6 +490,43 @@
+   }
+ 
+  private:
++  WriteGuard write_guard() { return WriteGuard(wake_state_, rw_mutex_.lock_write()); }
++  ReadGuard read_guard() { return ReadGuard(wake_state_, rw_mutex_.lock_read()); }
++
++  void move_from(BinlogKeyValue &other) {
++    std::shared_ptr<BinlogT> released;
++    {
++      WriteGuard first_lock, second_lock;
++      if (std::less<const void *>()(this, &other)) {
++        first_lock = write_guard(); second_lock = other.write_guard();
++      } else {
++        first_lock = other.write_guard(); second_lock = write_guard();
++      }
++      auto ready = other.snapshot_ready_;
++      released = std::move(binlog_);
++      map_ = std::move(other.map_);
++      other.map_ = decltype(other.map_)();
++      binlog_ = std::move(other.binlog_);
++      magic_ = other.magic_; other.magic_ = MAGIC;
++      reset_snapshot_incarnation(); other.reset_snapshot_incarnation();
++      snapshot_ready_ = ready;
++    }
++    released.reset();
++  }
++  void revise() {
++    CHECK(detail::advance_key_value_revision(revision_));
++  }
++  void reset_snapshot_incarnation() {
++    incarnation_ = std::make_shared<const char>(0);
++    revision_ = 0;
++    snapshot_ready_ = false;
++  }
++  // Stable per-object notification state, NOT transferred/rebound with map data.
++  const std::shared_ptr<WakeState> wake_state_ = std::make_shared<WakeState>();
++  // Protected by rw_mutex_. No secret-derived digests or persistent identity.
++  std::shared_ptr<const char> incarnation_ = std::make_shared<const char>(0);
++  uint64 revision_ = 0;
++  bool snapshot_ready_ = false;
+   WaitFreeHashMap<string, std::pair<string, uint64>> map_;
+   std::shared_ptr<BinlogT> binlog_;
+   RwMutex rw_mutex_;
+--- a/tdutils/td/utils/port/RwMutex.h
++++ b/tdutils/td/utils/port/RwMutex.h
+@@ -8,6 +8,9 @@
+ 
+ #include "td/utils/common.h"
+ #include "td/utils/port/config.h"
++#include "td/utils/Status.h"
++
++#include <cerrno>
+ 
+ #if TD_PORT_POSIX
+ #include <pthread.h>
+@@ -66,6 +69,21 @@
+   WriteLock lock_write() TD_WARN_UNUSED_RESULT {
+     lock_write_unsafe();
+     return WriteLock(this);
++  }
++
++  // G1 internal snapshot support. Success with an empty guard means BUSY;
++  // invalid/unsupported locks are errors, never disguised as healthy contention.
++  Result<WriteLock> try_lock_write() TD_WARN_UNUSED_RESULT {
++    if (empty()) { return Status::Error(400, "TGCLI_G1_SNAPSHOT_LOCK_INVALID"); }
++#if TD_PORT_POSIX
++    const auto result = pthread_rwlock_trywrlock(&mutex_);
++    if (result == 0) { return WriteLock(this); }
++    if (result == EBUSY) { return WriteLock(); }
++    return Status::Error(400, "TGCLI_G1_SNAPSHOT_LOCK_FAILED");
++#else
++    // Linux-first approval; no unreviewed backend adoption/fallback.
++    return Status::Error(400, "TGCLI_G1_SNAPSHOT_LOCK_UNSUPPORTED");
++#endif
+   }
+ 
+   void lock_read_unsafe();
+--- a/tddb/td/db/binlog/ConcurrentBinlog.h
++++ b/tddb/td/db/binlog/ConcurrentBinlog.h
+@@ -42,6 +42,10 @@
+   ~ConcurrentBinlog() final;
+ 
+   void force_sync(Promise<> promise, const char *source) final;
++  // G1 internal: reserved-watermark sync, then an explicitly deferred turn on
++  // the SAME native writer actor. Success callback must not wait for actors or
++  // invoke external callbacks under its own guards. Cancellation is not success.
++  void force_sync_handoff(Promise<> promise, const char *source);
+   void force_flush() final;
+   void change_key(DbKey db_key, Promise<> promise) final;
+ 

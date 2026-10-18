@@ -11,6 +11,10 @@ native-worker check. The read-only preview uses public fixtures, not a real acco
 There is no operational login, TDLib account database, live messaging or account-session
 reuse. Windows recipes are **unverified**; native Windows terminal execution is refused.
 
+The [G1 native-hardening source checkpoint](docs/native-g1-checkpoint.md) preserves
+experimental patches, PUBLIC fixtures and Java lease work. Its guarded factory remains
+fenced; selected contracts and component checks are **not** engine-wide acceptance.
+
 ## Build and try
 
 Use a full JDK 25. The Maven Wrapper downloads pinned Maven 3.9.16 and verifies

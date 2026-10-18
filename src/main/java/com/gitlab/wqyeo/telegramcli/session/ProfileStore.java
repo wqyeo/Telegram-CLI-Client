@@ -12,7 +12,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.*;
 import java.util.*;
 
-/** Linux-only, explicit storage primitives. Never called by existing commands. */
+/** Linux-only explicit storage primitives; no native SDK loading or secret acquisition. */
 public final class ProfileStore {
     private static final Path METADATA = Path.of("profile.json");
     private static final Path LOCK = Path.of("profile.lock");
@@ -46,18 +46,15 @@ public final class ProfileStore {
     public static Lease acquire(Path workspace, String name) throws SessionException {
         try {
             validateName(name);
-            try (var root = workspace(workspace);
-                 var directory = root.newDirectoryStream(Path.of(name), NOFOLLOW_LINKS)) {
+            var root = workspace(workspace);
+            try {
+                var directory = root.newDirectoryStream(Path.of(name), NOFOLLOW_LINKS);
+                try {
                 checkDirectory(directory);
-                var metadata = checkFile(directory, METADATA);
-                if (metadata.size() != SCHEMA.length) { throw new SessionException(PROFILE_INVALID); }
-                try (var channel = directory.newByteChannel(METADATA, Set.of(StandardOpenOption.READ, NOFOLLOW_LINKS))) {
-                    var data = ByteBuffer.allocate(SCHEMA.length + 1);
-                    while (data.hasRemaining() && channel.read(data) != -1) { /* bounded */ }
-                    if (data.position() != SCHEMA.length || !Arrays.equals(SCHEMA, Arrays.copyOf(data.array(), data.position()))) {
-                        throw new SessionException(PROFILE_INVALID);
-                    }
-                }
+                var rootKey = root.getFileAttributeView(PosixFileAttributeView.class).readAttributes().fileKey();
+                var profileKey = directory.getFileAttributeView(PosixFileAttributeView.class).readAttributes().fileKey();
+                if (rootKey == null || profileKey == null) { throw new SessionException(PROFILE_INVALID); }
+                checkMetadata(directory);
                 var attributes = checkFile(directory, LOCK);
                 if (attributes.size() != 0 || attributes.fileKey() == null) { throw new SessionException(PROFILE_INVALID); }
                 Object key = attributes.fileKey();
@@ -73,8 +70,12 @@ public final class ProfileStore {
                         if (!key.equals(checkFile(directory, LOCK).fileKey())) { throw new SessionException(PROFILE_INVALID); }
                         FileLock lock = channel.tryLock();
                         if (lock == null) { throw new SessionException(PROFILE_BUSY); }
+                        var lease = new Lease(key, channel, lock, root, directory, rootKey, profileKey, workspace, name);
                         HELD.add(key);
-                        return new Lease(key, channel, lock);
+                        // Ownership transfers only after successful lease construction.
+                        root = null;
+                        directory = null;
+                        return lease;
                     } catch (OverlappingFileLockException exception) {
                         channel.close();
                         throw new SessionException(PROFILE_BUSY);
@@ -83,9 +84,22 @@ public final class ProfileStore {
                         throw exception;
                     }
                 }
-            }
+                } finally { if (directory != null) { directory.close(); } }
+            } finally { if (root != null) { root.close(); } }
         } catch (SessionException exception) { throw exception; }
         catch (IOException | RuntimeException exception) { throw new SessionException(PROFILE_INVALID); }
+    }
+
+    private static void checkMetadata(SecureDirectoryStream<Path> directory) throws IOException {
+        var metadata = checkFile(directory, METADATA);
+        if (metadata.size() != SCHEMA.length) { throw new SessionException(PROFILE_INVALID); }
+        try (var channel = directory.newByteChannel(METADATA, Set.of(StandardOpenOption.READ, NOFOLLOW_LINKS))) {
+            var data = ByteBuffer.allocate(SCHEMA.length + 1);
+            while (data.hasRemaining() && channel.read(data) != -1) { /* bounded */ }
+            if (data.position() != SCHEMA.length || !Arrays.equals(SCHEMA, Arrays.copyOf(data.array(), data.position()))) {
+                throw new SessionException(PROFILE_INVALID);
+            }
+        }
     }
 
     private static void validateName(String name) throws SessionException {
@@ -158,25 +172,113 @@ public final class ProfileStore {
         }
     }
 
-    /** Stable inode and one channel; the database-owning worker must hold this lease. */
+    /** One lock channel plus retained directory identities; held through actual native shutdown. */
     public static final class Lease implements AutoCloseable {
-        private final Object key;
+        private final Object key, rootKey, profileKey;
         private final FileChannel channel;
         private final FileLock lock;
-        private boolean closed;
-        private Lease(Object key, FileChannel channel, FileLock lock) {
+        private final SecureDirectoryStream<Path> root, directory;
+        private final Path workspace;
+        private final String name;
+        private boolean closed, closing, claimAttempted, nativeLive;
+        private Lease(Object key, FileChannel channel, FileLock lock, SecureDirectoryStream<Path> root,
+                      SecureDirectoryStream<Path> directory, Object rootKey, Object profileKey,
+                      Path workspace, String name) {
             this.key = key; this.channel = channel; this.lock = lock;
+            this.root = root; this.directory = directory; this.rootKey = rootKey; this.profileKey = profileKey;
+            this.workspace = workspace; this.name = name;
         }
+
+        // Worker/package-only API. It does not load JNI or claim that a client exists.
+        NativeClaim claimNative(UUID generation) throws SessionException {
+            synchronized (HELD) {
+                if (closed || closing || claimAttempted) { throw new SessionException(PROFILE_INVALID); }
+                claimAttempted = true;
+                if (generation == null) { throw new SessionException(PROFILE_INVALID); }
+                var identity = nativeIdentity(generation.toString());
+                nativeLive = true;
+                return new NativeClaim(this, identity);
+            }
+        }
+
+        private NativeIdentity nativeIdentity(String generation) throws SessionException {
+            try {
+                if (closed || closing || !channel.isOpen() || !lock.isValid()) { throw new SessionException(PROFILE_INVALID); }
+                checkDirectory(root);
+                checkDirectory(directory);
+                checkMetadata(directory);
+                // Attribute-only lock check: NEVER open another lock descriptor.
+                var lockAttributes = checkFile(directory, LOCK);
+                if (lockAttributes.size() != 0 || !key.equals(lockAttributes.fileKey())
+                        || !rootKey.equals(root.getFileAttributeView(PosixFileAttributeView.class).readAttributes().fileKey())
+                        || !profileKey.equals(directory.getFileAttributeView(PosixFileAttributeView.class).readAttributes().fileKey())) {
+                    throw new SessionException(PROFILE_INVALID);
+                }
+                // Revalidate the trusted ancestor chain and named workspace. Only directory
+                // handles are opened/closed here; the original lock channel remains untouched.
+                try (var checkedRoot = workspace(workspace)) {
+                    if (!rootKey.equals(checkedRoot.getFileAttributeView(PosixFileAttributeView.class).readAttributes().fileKey())) {
+                        throw new SessionException(PROFILE_INVALID);
+                    }
+                }
+                // One provider snapshot: never parse fileKey.toString or JDK-private fd internals.
+                var attributes = Files.readAttributes(workspace.resolve(name), "unix:dev,ino,fileKey", NOFOLLOW_LINKS);
+                if (!profileKey.equals(attributes.get("fileKey")) || !(attributes.get("dev") instanceof Long device)
+                        || !(attributes.get("ino") instanceof Long inode)) { throw new SessionException(PROFILE_INVALID); }
+                return new NativeIdentity(workspace.resolve(name).toString(), name, generation, device, inode);
+            } catch (SessionException exception) { throw exception; }
+            catch (IOException | RuntimeException exception) { throw new SessionException(PROFILE_INVALID); }
+        }
+
         @Override public void close() throws SessionException {
             synchronized (HELD) {
                 if (closed) { return; }
-                try {
-                    lock.release();
-                    channel.close();
-                    closed = true;
-                    HELD.remove(key);
-                } catch (IOException exception) { throw new SessionException(CLOSE_FAILED); }
+                if (nativeLive) { throw new SessionException(CLOSE_FAILED); }
+                closing = true;
+                boolean failed = false;
+                try { if (lock.isValid()) { lock.release(); } } catch (IOException exception) { failed = true; }
+                try { channel.close(); } catch (IOException exception) { failed = true; }
+                // If close is uncertain, keep HELD so another acquire cannot open and
+                // close a second descriptor against a possibly still-live kernel lock.
+                if (!channel.isOpen()) { HELD.remove(key); }
+                try { directory.close(); } catch (IOException exception) { failed = true; }
+                try { root.close(); } catch (IOException exception) { failed = true; }
+                if (failed) { throw new SessionException(CLOSE_FAILED); }
+                closed = true;
             }
+        }
+    }
+
+    record NativeIdentity(String directory, String profileName, String generation, long device, long inode) {
+        @Override public String toString() { return "NativeIdentity[non-secret identity withheld]"; }
+    }
+    @FunctionalInterface
+    interface NativeMinter { long mint(NativeIdentity identity) throws SessionException; }
+
+    /** Not AutoCloseable: a scope exit/exception is NOT evidence of native shutdown. */
+    static final class NativeClaim {
+        private final Lease lease;
+        private final NativeIdentity identity;
+        private boolean mintAttempted, stopped;
+        private NativeClaim(Lease lease, NativeIdentity identity) { this.lease = lease; this.identity = identity; }
+        long mint(NativeMinter minter) throws SessionException {
+            synchronized (HELD) {
+                if (stopped || mintAttempted || !lease.nativeLive) { throw new SessionException(PROFILE_INVALID); }
+                mintAttempted = true; // failed validation/mint never grants a retry
+                if (minter == null || !identity.equals(lease.nativeIdentity(identity.generation()))) {
+                    throw new SessionException(PROFILE_INVALID);
+                }
+                // Same ownership monitor covers native mint; normal lease.close cannot
+                // race between the last Java check and the native pre-mutation check.
+                long handle = minter.mint(identity);
+                if (handle <= 0) { throw new SessionException(START_FAILED); }
+                return handle;
+            }
+        }
+        // Trusted native worker only: call after actual native Closed, or confirmed
+        // no-client construction/abandon. Timeout, exception or kill request is NOT proof.
+        void confirmNativeStopped() {
+            synchronized (HELD) { stopped = true; lease.nativeLive = false; }
         }
     }
 }

@@ -1,0 +1,53 @@
+--- a/tddb/td/db/binlog/Binlog.cpp
++++ b/tddb/td/db/binlog/Binlog.cpp
+@@ -312,10 +312,10 @@
+   promise.set_value({});
+ }
+ 
+-void Binlog::change_key(DbKey new_db_key) {
+-  db_key_ = std::move(new_db_key);
+-  aes_ctr_key_salt_ = string();
+-  do_reindex();
++void Binlog::change_key(DbKey /*new_db_key*/) {
++  // The legacy void API cannot report a refusal to its caller. Stop rather than
++  // silently continue under an unapproved or falsely acknowledged new key.
++  LOG(FATAL) << "TGCLI_G1_BINLOG_KEY_ROTATION_REFUSED";
+ }
+ 
+ Status Binlog::close_and_destroy() {
+@@ -614,10 +614,11 @@
+ 
+   string new_path = path_ + ".new";
+ 
+-  auto r_opened_file = open_binlog(new_path, FileFd::Flags::Write | FileFd::Flags::Create | FileFd::Truncate);
++  // CreateNew WITHOUT Create maps to O_CREAT|O_EXCL on the pinned Linux port.
++  // Never truncate an existing replacement remnant or continue after refusal.
++  auto r_opened_file = open_binlog(new_path, FileFd::Flags::Write | FileFd::Flags::CreateNew);
+   if (r_opened_file.is_error()) {
+-    LOG(ERROR) << "Can't open new binlog for regenerate: " << r_opened_file.error();
+-    return;
++    LOG(FATAL) << "TGCLI_G1_BINLOG_COMPACTION_REFUSED";
+   }
+   auto old_fd = std::move(fd_);  // can't close fd_ now, because it will release file lock
+   fd_ = BufferedFdBase<FileFd>(r_opened_file.move_as_ok());
+@@ -643,13 +644,13 @@
+     need_sync_ = false;
+   }
+ 
+-  // finish_reindex
+-  auto status = unlink(path_);
+-  LOG_IF(FATAL, status.is_error()) << "Failed to unlink old binlog: " << status;
+-  old_fd.close();  // now we can close old file and release the system lock
+-  status = rename(new_path, path_);
+-  FileFd::remove_local_lock(new_path);  // now we can release local lock for temporary file
+-  LOG_IF(FATAL, status.is_error()) << "Failed to rename binlog: " << status;
++  // Linux rename replaces the accepted main directly. Keep the old fd/lock and
++  // original directory entry until this succeeds; a rename error must not follow
++  // a prior unlink of the only main. This is NOT crash/directory-fsync atomicity.
++  auto status = rename(new_path, path_);
++  LOG_IF(FATAL, status.is_error()) << "TGCLI_G1_BINLOG_COMPACTION_RENAME_REFUSED";
++  old_fd.close();
++  FileFd::remove_local_lock(new_path);
+ 
+   auto finish_time = Clocks::monotonic();
+   auto finish_size = fd_size_;

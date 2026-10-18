@@ -1,0 +1,139 @@
+--- a/tddb/td/db/detail/RawSqliteDb.cpp
++++ b/tddb/td/db/detail/RawSqliteDb.cpp
+@@ -37,13 +37,8 @@
+ }
+ 
+ Status RawSqliteDb::last_error() {
+-  //If database was corrupted, try to delete it.
+-  auto code = tdsqlite3_errcode(db_);
+-  if (code == SQLITE_CORRUPT) {
+-    was_database_destroyed.store(true, std::memory_order_relaxed);
+-    destroy(path_).ignore();
+-  }
+-
++  // Telegram-CLI G1: report corruption; never destroy the original as recovery.
++  // Explicit destroy callers remain a separate, not-yet-hardened engine boundary.
+   return last_error(db_, path());
+ }
+ 
+--- a/tddb/td/db/SqliteDb.cpp
++++ b/tddb/td/db/SqliteDb.cpp
+@@ -71,23 +71,18 @@
+ 
+ SqliteDb::~SqliteDb() = default;
+ 
+-Status SqliteDb::init(CSlice path, bool allow_creation) {
+-  // if database does not exist, delete all other files which could have been left from the old database
++Status SqliteDb::init(CSlice path, bool /*allow_creation*/) {
++  // Telegram-CLI G1 B1a has no NEW-store capability yet. Missing/inaccessible paths
++  // refuse even when a legacy caller passes allow_creation; never clean sidecars.
+   auto database_stat = stat(path);
+-  if (database_stat.is_error()) {
+-    if (!allow_creation) {
+-      bool was_destroyed = detail::RawSqliteDb::was_any_database_destroyed();
+-      auto reason = was_destroyed ? Slice("was corrupted and deleted") : Slice("disappeared");
+-      return Status::Error(PSLICE() << "Database " << reason
+-                                    << " during execution and can't be recreated: " << database_stat.error());
+-    }
+-    TRY_STATUS(destroy(path));
++  if (database_stat.is_error() || database_stat.ok().size_ == 0) {
++    return Status::Error("TGCLI_G1_EXISTING_SQLITE_REQUIRED");
+   }
+ 
+   tdsqlite3 *db;
+   CHECK(tdsqlite3_threadsafe() != 0);
+-  int rc =
+-      tdsqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE | (allow_creation ? SQLITE_OPEN_CREATE : 0), nullptr);
++  // Do not recreate a main file that disappears between stat and SQLite open.
++  int rc = tdsqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr);
+   if (rc != SQLITE_OK) {
+     auto res = detail::RawSqliteDb::last_error(db, path);
+     tdsqlite3_close(db);
+@@ -211,13 +206,13 @@
+   return status;
+ }
+ 
+-Result<SqliteDb> SqliteDb::open_with_key(CSlice path, bool allow_creation, const DbKey &db_key,
++Result<SqliteDb> SqliteDb::open_with_key(CSlice path, bool /*allow_creation*/, const DbKey &db_key,
+                                          optional<int32> cipher_version) {
+-  auto res = do_open_with_key(path, allow_creation, db_key, cipher_version ? cipher_version.value() : 0);
+-  if (res.is_error() && !cipher_version && !db_key.is_empty()) {
+-    return do_open_with_key(path, false, db_key, 3);
+-  }
+-  return res;
++  // Only the pinned default format is admitted. No compatibility probing/migration.
++  if (cipher_version && cipher_version.value() != 0) {
++    return Status::Error("TGCLI_G1_SQLITE_COMPATIBILITY_REFUSED");
++  }
++  return do_open_with_key(path, false, db_key, 0);
+ }
+ 
+ Result<SqliteDb> SqliteDb::do_open_with_key(CSlice path, bool allow_creation, const DbKey &db_key,
+@@ -248,62 +243,11 @@
+   return raw_->get_cipher_version();
+ }
+ 
+-Result<SqliteDb> SqliteDb::change_key(CSlice path, bool allow_creation, const DbKey &new_db_key,
+-                                      const DbKey &old_db_key) {
+-  // fast path
+-  {
+-    PerfWarningTimer perf("open database", 0.05);
+-    auto r_db = open_with_key(path, allow_creation, new_db_key);
+-    if (r_db.is_ok()) {
+-      return r_db;
+-    }
+-  }
+-
+-  PerfWarningTimer perf("change database key", 0.5);
+-  auto create_database = [](CSlice tmp_path) -> Status {
+-    TRY_STATUS(destroy(tmp_path));
+-    SqliteDb db;
+-    return db.init(tmp_path, true);
+-  };
+-
+-  TRY_RESULT(db, open_with_key(path, false, old_db_key));
+-  TRY_RESULT(user_version, db.user_version());
+-  auto new_key = db_key_to_sqlcipher_key(new_db_key);
+-  if (old_db_key.is_empty() && !new_db_key.is_empty()) {
+-    LOG(DEBUG) << "ENCRYPT";
+-    PerfWarningTimer timer("Encrypt SQLite database", 0.1);
+-    auto tmp_path = path.str() + ".encrypted";
+-    TRY_STATUS(create_database(tmp_path));
+-
+-    // make sure that database is not empty
+-    TRY_STATUS(db.exec("CREATE TABLE IF NOT EXISTS encryption_dummy_table(id INT PRIMARY KEY)"));
+-    TRY_STATUS(db.exec(PSLICE() << "ATTACH DATABASE '" << quote_string(tmp_path) << "' AS encrypted KEY " << new_key));
+-    TRY_STATUS(db.exec("SELECT sqlcipher_export('encrypted')"));
+-    TRY_STATUS(db.exec(PSLICE() << "PRAGMA encrypted.user_version = " << user_version));
+-    TRY_STATUS(db.exec("DETACH DATABASE encrypted"));
+-    db.close();
+-    TRY_STATUS(rename(tmp_path, path));
+-  } else if (!old_db_key.is_empty() && new_db_key.is_empty()) {
+-    LOG(DEBUG) << "DECRYPT";
+-    PerfWarningTimer timer("Decrypt SQLite database", 0.1);
+-    auto tmp_path = path.str() + ".encrypted";
+-    TRY_STATUS(create_database(tmp_path));
+-
+-    TRY_STATUS(db.exec(PSLICE() << "ATTACH DATABASE '" << quote_string(tmp_path) << "' AS decrypted KEY ''"));
+-    TRY_STATUS(db.exec("SELECT sqlcipher_export('decrypted')"));
+-    TRY_STATUS(db.exec(PSLICE() << "PRAGMA decrypted.user_version = " << user_version));
+-    TRY_STATUS(db.exec("DETACH DATABASE decrypted"));
+-    db.close();
+-    TRY_STATUS(rename(tmp_path, path));
+-  } else {
+-    LOG(DEBUG) << "REKEY";
+-    PerfWarningTimer timer("Rekey SQLite database", 0.1);
+-    TRY_STATUS(db.exec(PSLICE() << "PRAGMA rekey = " << new_key));
+-  }
+-
+-  TRY_RESULT(new_db, open_with_key(path, false, new_db_key));
+-  CHECK(new_db.user_version().ok() == user_version);
+-  return std::move(new_db);
++Result<SqliteDb> SqliteDb::change_key(CSlice path, bool /*allow_creation*/, const DbKey &new_db_key,
++                                      const DbKey & /*old_db_key*/) {
++  // Admit only an already-current key. Never try an old/plaintext key, export,
++  // replace, rekey, or create a database after this one attempt fails.
++  return open_with_key(path, false, new_db_key);
+ }
+ Status SqliteDb::destroy(Slice path) {
+   return detail::RawSqliteDb::destroy(path);

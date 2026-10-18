@@ -1,0 +1,3 @@
+# Optional opt-in native analysis context; see README for the ignored local database.
+CompileFlags:
+  CompilationDatabase: ../../.pi/g1-lsp
