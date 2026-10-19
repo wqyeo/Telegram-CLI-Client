@@ -5,6 +5,11 @@ fenced. This refines [Close/repair boundaries](native-g1-close-and-repair.md), n
 selected admission contracts or the sole-lease rule. No compiler, TDLib client, engine,
 account, network session or shutdown sequence was executed.
 
+The later [concrete repair-owner register](native-g1-repair-owner-register.md) follows the
+AppConfig promises and FileLoad/GC owners, including the upload continuation that ignores
+its repair Result and the disposal-sensitive partial-read SleepActor. It refines these
+obligations without closing the whole resource roster.
+
 ## Evidence and limits
 
 At pinned TDLib revision `a94b83d67ab4c8397c6245e541b31a4131ea2f79`, a fresh private packet
