@@ -72,7 +72,9 @@ is not proof of all effects, durable sync or physical resource release.
 For download/upload, child callbacks retain token-bearing `ActorShared` handles, move terminal
 handles into manager messages, and managers resolve the node using the link token. Missing
 nodes are ignored on late callback/error paths. Manager-to-FileManager wrappers use ActorId
-and queue the relevant query ID; they do not carry a G1 admission/session generation.
+and send the relevant query ID; they do not carry a G1 admission/session generation.
+Ordinary dispatch can run immediately under suitable scheduler conditions, rather than
+always queueing. See the [Close/repair follow-up](native-g1-close-and-repair.md).
 
 `finish_downloads` and `finish_uploads` remove request entries before invoking extracted
 callbacks. `on_file_load_error` requests cancellation of all three work kinds and finishes
@@ -84,7 +86,7 @@ that call it, nor prove completion of the cancellation messages it sends.
 In `FileGenerateManager.cpp`:
 
 - `#file_id#` generation delegates to a FileManager download. Hangup sends cancel-download
-  back to FileManager and stops the generating actor; success can queue a lambda back to
+  back to FileManager and stops the generating actor; success can dispatch a lambda back to
   FileManager that then invokes the generation callback.
 - Web generation dispatches `upload_getWebFile` through a callback actor. Success processes
   and saves file bytes before notifying the generation callback. This branch is not excluded
