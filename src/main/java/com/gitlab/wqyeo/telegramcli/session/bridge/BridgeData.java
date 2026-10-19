@@ -14,7 +14,9 @@ public final class BridgeData {
 
     public enum Kind {
         CONTROL(1, 4096), AUTH(2, 4096), REQUEST(3, 4096), IDENTITY(4, 4096),
-        CHATS(5, 65536), MESSAGES(6, 262144), REMOVED(7, 4096), CONNECTION(8, 4096), FAILURE(9, 4096), CHANGED(10, 16384);
+        CHATS(5, 65536), MESSAGES(6, 262144), REMOVED(7, 4096), CONNECTION(8, 4096), FAILURE(9, 4096), CHANGED(10, 16384),
+        ACCOUNT(11, 4096), HISTORY_REQUEST(12, 4096), HISTORY_PAGE(13, 262144),
+        MESSAGE_UPDATE(14, 16384), CHAT_REMOVED(15, 4096), DIRECTORY(16, 65536);
         private final int code;
         private final int maxBytes;
         Kind(int code, int maxBytes) { this.code = code; this.maxBytes = maxBytes; }
@@ -36,15 +38,20 @@ public final class BridgeData {
     public enum Phase { OFFLINE, LOADING, READY, AUTH_EXPIRED }
     public enum Error { INVALID_CODE, INVALID_PASSWORD, RETRY_LATER, UNSUPPORTED, CANCELLED, NOT_AVAILABLE }
 
-    public sealed interface Payload permits Control, Auth, Request, Identity, Chats, Messages, Changed, Removed, Connection, Failure {
+    public sealed interface Payload permits Control, Auth, Request, Identity, Chats, Messages, Changed, Removed, Connection, Failure,
+            Account, HistoryRequest, HistoryPage, MessageUpdate, ChatRemoved, Directory {
         Kind kind();
         // Ordinary Jackson/debug output must not accidentally dump private response text.
         @JsonValue default String redacted() { return "[REDACTED bridge payload]"; }
     }
-    public record Frame(UUID generation, long sequence, long requestId, Payload payload) {
+    public record Frame(int version, UUID generation, long sequence, long requestId, Payload payload) {
+        /** Preserve the original PUBLIC preview wire/API unchanged. */
+        public Frame(UUID generation, long sequence, long requestId, Payload payload) { this(1, generation, sequence, requestId, payload); }
         public Frame {
-            if (generation == null || sequence < 1 || requestId < 0 || payload == null
-                    || ((payload instanceof Request || payload instanceof Chats || payload instanceof Messages) && requestId == 0)) { throw invalid(); }
+            if (generation == null || sequence < 1 || requestId < 0 || payload == null || !supports(version, payload.kind())
+                    || (version == 2 && payload instanceof Request r && r.target() != Target.CHATS)
+                    || ((payload instanceof Request || payload instanceof Chats || payload instanceof Messages
+                         || payload instanceof HistoryRequest || payload instanceof HistoryPage || payload instanceof Directory) && requestId == 0)) { throw invalid(); }
         }
         @JsonValue public String redacted() { return "[REDACTED bridge frame]"; }
         @Override public String toString() { return redacted(); }
@@ -82,6 +89,7 @@ public final class BridgeData {
     }
     public record Chat(long id, String title, ChatKind chatKind) {
         public Chat { if (id == 0 || chatKind == null) { throw invalid(); } text(title, 256); }
+        public static Chat project(long id, String title, ChatKind kind) { return new Chat(id, displayName(title), kind); }
         @JsonValue public String redacted() { return "[REDACTED chat]"; }
         @Override public String toString() { return redacted(); }
     }
@@ -135,7 +143,100 @@ public final class BridgeData {
         @Override public Kind kind() { return Kind.FAILURE; }
         @Override public String toString() { return redacted(); }
     }
-    private static void text(String value, int maxBytes) {
+    /** V2 deliberately shares only lifecycle/auth/control and directory-request shapes with v1. */
+    static boolean supports(int version, Kind kind) {
+        return version == 1 ? kind.code() <= 10 : version == 2 && (kind.code() >= 11
+                || kind == Kind.CONTROL || kind == Kind.AUTH || kind == Kind.REQUEST || kind == Kind.CONNECTION || kind == Kind.FAILURE);
+    }
+    public enum ContinuationState { AVAILABLE, END, UNKNOWN }
+    public record Continuation(ContinuationState state, long cursor) {
+        public Continuation {
+            if (state == null || (state == ContinuationState.AVAILABLE ? cursor < 1 : cursor != 0)) { throw invalid(); }
+        }
+        public static Continuation unknown() { return new Continuation(ContinuationState.UNKNOWN, 0); }
+        public static Continuation end() { return new Continuation(ContinuationState.END, 0); }
+        @JsonValue public String redacted() { return "[REDACTED continuation]"; }
+        @Override public String toString() { return redacted(); }
+    }
+    public record Account(long userId, String displayName) implements Payload {
+        public Account { if (userId < 1) { throw invalid(); } text(displayName, 256); }
+        public static Account project(long userId, String name) { return new Account(userId, BridgeData.displayName(name)); }
+        @Override public Kind kind() { return Kind.ACCOUNT; }
+        @Override public String toString() { return redacted(); }
+    }
+    public record Directory(List<Chat> rows, Continuation next) implements Payload {
+        public Directory { rows = new Chats(rows, 0).rows(); Objects.requireNonNull(next); }
+        @Override public Kind kind() { return Kind.DIRECTORY; }
+        @Override public String toString() { return redacted(); }
+    }
+    public record HistoryRequest(long chatId, long selection, long window, long cursor, int limit) implements Payload {
+        public HistoryRequest {
+            if (chatId == 0 || selection < 1 || window < 1 || cursor < 0 || limit < 1 || limit > MESSAGE_PAGE) { throw invalid(); }
+        }
+        @Override public Kind kind() { return Kind.HISTORY_REQUEST; }
+        @Override public String toString() { return redacted(); }
+    }
+    public record MessageKey(long chatId, long messageId) {
+        public MessageKey { if (chatId == 0 || messageId < 1) { throw invalid(); } }
+        @JsonValue public String redacted() { return "[REDACTED message key]"; }
+        @Override public String toString() { return redacted(); }
+    }
+    public enum Content { TEXT, UNSUPPORTED }
+    public record ReaderMessage(long chatId, long id, String sender, String text, long date, long expiresAt,
+                                boolean edited, boolean truncated, Content content) {
+        public ReaderMessage {
+            if (chatId == 0 || content == null) { throw invalid(); }
+            new Message(id, sender, text, date, expiresAt, edited);
+        }
+        public MessageKey key() { return new MessageKey(chatId, id); }
+        /** Bounded display projection only, never normalization of native persisted values. */
+        public static ReaderMessage project(long chatId, long id, String sender, String text, long date, long expiresAt, boolean edited, Content content) {
+            String name = clip(sender, 128), body = content == Content.UNSUPPORTED ? "[Unsupported content]" : clip(text, 2048);
+            return new ReaderMessage(chatId, id, name, body, date, expiresAt, edited,
+                    !name.equals(sender) || (content == Content.TEXT && !body.equals(text)), content);
+        }
+        @JsonValue public String redacted() { return "[REDACTED reader message]"; }
+        @Override public String toString() { return redacted(); }
+    }
+    public record HistoryPage(long chatId, long selection, long window, List<ReaderMessage> rows, Continuation next) implements Payload {
+        public HistoryPage {
+            if (chatId == 0 || selection < 1 || window < 1 || rows == null || rows.size() > MESSAGE_PAGE || next == null
+                    || rows.stream().anyMatch(m -> m == null || m.chatId() != chatId)
+                    || rows.stream().map(ReaderMessage::id).distinct().count() != rows.size()) { throw invalid(); }
+            rows = List.copyOf(rows);
+        }
+        @Override public Kind kind() { return Kind.HISTORY_PAGE; }
+        @Override public String toString() { return redacted(); }
+    }
+    public enum Update { NEW, EDIT }
+    public record MessageUpdate(Update update, ReaderMessage message) implements Payload {
+        public MessageUpdate { if (update == null || message == null) { throw invalid(); } }
+        @Override public Kind kind() { return Kind.MESSAGE_UPDATE; }
+        @Override public String toString() { return redacted(); }
+    }
+    public record ChatRemoved(long chatId, List<Long> ids, boolean expired) implements Payload {
+        public ChatRemoved { if (chatId == 0) { throw invalid(); } ids = new Removed(ids, expired).ids(); }
+        @Override public Kind kind() { return Kind.CHAT_REMOVED; }
+        @Override public String toString() { return redacted(); }
+    }
+    private static String displayName(String value) {
+        String prefix = clip(value, 256);
+        return prefix.length() == value.length() ? prefix : clip(value, 253) + "…";
+    }
+    /** Unicode-safe prefix without encoding/allocating the complete unbounded source string. */
+    public static String clip(String value, int maxBytes) {
+        if (value == null || maxBytes < 1 || maxBytes > 2048) { throw invalid(); }
+        int end = 0, bytes = 0;
+        while (end < value.length()) {
+            int cp = value.codePointAt(end);
+            if (cp >= 0xd800 && cp <= 0xdfff) { throw invalid(); }
+            int size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+            if (bytes + size > maxBytes) { break; }
+            bytes += size; end += Character.charCount(cp);
+        }
+        return end == value.length() ? value : value.substring(0, end);
+    }
+    static void text(String value, int maxBytes) {
         // Valid UTF-8 needs at least one byte per UTF-16 unit. Bound input before
         // the encoder or getBytes can allocate a caller-sized intermediate copy.
         if (value == null || value.length() > maxBytes || !StandardCharsets.UTF_8.newEncoder().canEncode(value)

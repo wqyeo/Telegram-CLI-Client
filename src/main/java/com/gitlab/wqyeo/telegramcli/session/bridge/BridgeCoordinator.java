@@ -15,12 +15,33 @@ public final class BridgeCoordinator implements AutoCloseable {
     public record Snapshot(UUID generation, long sequence, Auth auth, Identity identity, Phase connection,
                            List<Chat> chats, List<Message> messages, long nextChats, long nextMessages, long acceptedSavedRequest,
                            int retainedMessages, int pendingRequests, int retryAfterSeconds, BridgeData.Error lastError,
-                           BridgeException.Code failure, boolean disposed) {
+                           BridgeException.Code failure, boolean disposed, ReaderView reader) {
         public Snapshot { chats = List.copyOf(chats); messages = List.copyOf(messages); }
         @JsonValue public String redacted() { return "[REDACTED bridge snapshot]"; }
         @Override public String toString() { return redacted(); }
     }
-    private record Pending(Target target, long started) {}
+    /** PUBLIC reader projection only; disposal never asserts native-stop acceptance. */
+    public record ReaderView(Account account, long chatId, long selection, long window, boolean latestWindow,
+                             List<ReaderMessage> messages, Continuation next, Continuation directoryNext,
+                             List<Chat> searchResults, String searchQuery, boolean loading, int incomingIndicator, int retainedMessages) {
+        public ReaderView { messages = List.copyOf(messages); searchResults = List.copyOf(searchResults); }
+        public String searchCoverage() { return "LOADED_ONLY"; }
+        public boolean nativeStopAccepted() { return false; }
+        @JsonValue public String redacted() { return "[REDACTED PUBLIC reader view]"; }
+        @Override public String toString() { return redacted(); }
+    }
+    private record Pending(Target target, long started, HistoryRequest history) {
+        private Pending(Target target, long started) { this(target, started, null); }
+    }
+    private final int version;
+    private Account account;
+    private final LinkedHashMap<MessageKey, ReaderMessage> readerMessages = new LinkedHashMap<>();
+    private final List<MessageKey> readerActive = new ArrayList<>();
+    private long selectedChat, selectionCounter, selection, windowCounter, window;
+    private boolean latestWindow;
+    private int incomingIndicator;
+    private String searchQuery = "";
+    private Continuation readerNext = Continuation.unknown(), directoryNext = Continuation.unknown();
     private final UUID generation;
     private final Clock clock;
     private final LongSupplier nanoTime;
@@ -39,10 +60,15 @@ public final class BridgeCoordinator implements AutoCloseable {
     private volatile Snapshot snapshot;
 
     public BridgeCoordinator(UUID generation) { this(generation, Clock.systemUTC(), System::nanoTime); }
-    public BridgeCoordinator(UUID generation, Clock clock, LongSupplier nanoTime) {
+    public BridgeCoordinator(UUID generation, Clock clock, LongSupplier nanoTime) { this(generation, clock, nanoTime, 1); }
+    public static BridgeCoordinator publicReader(UUID generation) { return publicReader(generation, Clock.systemUTC(), System::nanoTime); }
+    public static BridgeCoordinator publicReader(UUID generation, Clock clock, LongSupplier nanoTime) { return new BridgeCoordinator(generation, clock, nanoTime, 2); }
+    private BridgeCoordinator(UUID generation, Clock clock, LongSupplier nanoTime, int version) {
+        this.version = version;
         this.generation = Objects.requireNonNull(generation); this.clock = Objects.requireNonNull(clock);
         this.nanoTime = Objects.requireNonNull(nanoTime); publish();
     }
+    public int protocolVersion() { return version; }
     public Snapshot latest() { return snapshot; }
     public synchronized int queued() { return queue.size(); }
 
@@ -50,7 +76,7 @@ public final class BridgeCoordinator implements AutoCloseable {
     public synchronized void offer(Frame frame) throws BridgeException {
         if (frame != null && !generation.equals(frame.generation())) { return; }
         checkOpen();
-        if (frame == null) { throw fail(BridgeException.Code.STATE_INVALID); }
+        if (frame == null || frame.version() != version) { throw fail(BridgeException.Code.STATE_INVALID); }
         if (queue.size() == QUEUE_CAPACITY) { throw fail(BridgeException.Code.OVERFLOW); }
         queue.addLast(frame);
     }
@@ -74,6 +100,9 @@ public final class BridgeCoordinator implements AutoCloseable {
     }
     public synchronized Frame request(Target target, long cursor, int limit) throws BridgeException {
         checkReady();
+        if (version == 2 && (target != Target.CHATS || pending.values().stream().anyMatch(p -> p.target() == Target.CHATS))) {
+            throw new BridgeException(BridgeException.Code.STATE_INVALID);
+        }
         if (pending.size() >= MAX_PENDING) { throw fail(BridgeException.Code.OVERFLOW); }
         try {
             var payload = new Request(target, cursor, limit); Frame frame = outgoing(payload);
@@ -107,7 +136,7 @@ public final class BridgeCoordinator implements AutoCloseable {
         return frame; // Local disposal is NOT an engine-close acknowledgment.
     }
     private Frame outgoing(Payload payload) throws BridgeException {
-        try { outgoing = Math.addExact(outgoing, 1); issued = Math.addExact(issued, 1); return new Frame(generation, outgoing, issued, payload); }
+        try { outgoing = Math.addExact(outgoing, 1); issued = Math.addExact(issued, 1); return new Frame(version, generation, outgoing, issued, payload); }
         catch (RuntimeException failure) { throw fail(BridgeException.Code.STATE_INVALID); }
     }
 
@@ -123,14 +152,14 @@ public final class BridgeCoordinator implements AutoCloseable {
                 auth = value; consumed = false; authRequest = 0; lastError = null;
                 if (value.step() == Step.RETRY) { retryStarted = nanoTime.getAsLong(); retryNanos = Duration.ofSeconds(value.retryAfterSeconds()).toNanos(); }
                 if (value.step() == Step.READY || value.step() == Step.CLOSED || value.step() == Step.UNSUPPORTED) { retryNanos = 0; }
-                if (value.step() != Step.READY) { clearData(); identity = null; connection = Phase.OFFLINE; }
+                if (value.step() != Step.READY) { clearData(); identity = null; account = null; connection = Phase.OFFLINE; }
             }
             case Identity value -> { if (frame.requestId() != 0) { throw BridgeData.invalid(); } ready(); identity = value; }
             case Connection value -> {
                 if (frame.requestId() != 0) { throw BridgeData.invalid(); }
-                if (value.phase() == Phase.READY) { ready(); if (identity == null) { throw BridgeData.invalid(); } }
+                if (value.phase() == Phase.READY) { ready(); if (!hasIdentity()) { throw BridgeData.invalid(); } }
                 connection = value.phase();
-                if (connection == Phase.AUTH_EXPIRED) { clearData(); identity = null; auth = null; authRequest = 0; consumed = true; retryNanos = 0; }
+                if (connection == Phase.AUTH_EXPIRED) { clearData(); identity = null; account = null; auth = null; authRequest = 0; consumed = true; retryNanos = 0; }
             }
             case Chats value -> {
                 if (!response(frame.requestId(), Target.CHATS)) { return; }
@@ -168,6 +197,24 @@ public final class BridgeCoordinator implements AutoCloseable {
                 else if (pending.remove(frame.requestId()) != null || frame.requestId() == 0) { lastError = value.error(); }
                 else if (frame.requestId() > issued) { throw BridgeData.invalid(); }
             }
+            case Account value -> {
+                unsolicited(frame); ready();
+                if (account != null && account.userId() != value.userId()) { throw BridgeData.invalid(); }
+                account = value;
+            }
+            case Directory value -> {
+                if (!response(frame.requestId(), Target.CHATS)) { return; }
+                for (var chat : value.rows()) { chats.put(chat.id(), chat); }
+                while (chats.size() > MAX_CHATS) { chats.pollFirstEntry(); }
+                directoryNext = value.next(); lastError = null;
+            }
+            case HistoryPage value -> applyHistory(frame.requestId(), value);
+            case MessageUpdate value -> { unsolicited(frame); applyUpdate(value); }
+            case ChatRemoved value -> {
+                unsolicited(frame); invalidateHistory(value.chatId());
+                for (long id : value.ids()) { var key = new MessageKey(value.chatId(), id); readerMessages.remove(key); readerActive.remove(key); }
+            }
+            case HistoryRequest ignored -> throw BridgeData.invalid();
             // The update ingress cannot act as a generic application/TDLib request dispatcher.
             case Control ignored -> throw BridgeData.invalid();
             case Request ignored -> throw BridgeData.invalid();
@@ -181,19 +228,23 @@ public final class BridgeCoordinator implements AutoCloseable {
     private boolean response(long id, Target target) {
         Pending value = pending.get(id);
         if (value == null) { if (id > issued) { throw BridgeData.invalid(); } return false; }
-        ready(); if (identity == null || value.target() != target) { throw BridgeData.invalid(); }
+        ready(); if (!hasIdentity() || value.target() != target || value.history() != null) { throw BridgeData.invalid(); }
         pending.remove(id); return true;
     }
     private boolean expire() throws BridgeException {
         boolean changed = messages.values().removeIf(this::expired);
         active.removeIf(id -> !messages.containsKey(id));
         if (changed) { pending.clear(); }
+        var expiredKeys = readerMessages.values().stream().filter(this::expired).map(ReaderMessage::key).toList();
+        for (var key : expiredKeys) { invalidateHistory(key.chatId()); readerMessages.remove(key); readerActive.remove(key); }
+        changed |= !expiredKeys.isEmpty();
         if (retryNanos != 0 && retryRemaining() == 0) { retryNanos = 0; changed = true; }
         long now = nanoTime.getAsLong();
         if (authRequest != 0 && now - authStarted >= AUTH_REPLY_NANOS) { throw fail(BridgeException.Code.TIMEOUT); }
         if (pending.values().removeIf(value -> now - value.started() >= REQUEST_NANOS)) { lastError = BridgeData.Error.NOT_AVAILABLE; changed = true; }
         return changed;
     }
+    private boolean expired(ReaderMessage message) { return message.expiresAt() != 0 && message.expiresAt() <= clock.instant().getEpochSecond(); }
     private boolean expired(Message message) { return message.expiresAt() != 0 && message.expiresAt() <= clock.instant().getEpochSecond(); }
     private int retryRemaining() {
         if (retryNanos == 0) { return 0; }
@@ -217,18 +268,112 @@ public final class BridgeCoordinator implements AutoCloseable {
     }
     private void ready() { if (auth == null || auth.step() != Step.READY) { throw BridgeData.invalid(); } }
     private void checkReady() throws BridgeException {
-        checkOpen(); if (auth == null || auth.step() != Step.READY || identity == null) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        checkOpen(); if (auth == null || auth.step() != Step.READY || !hasIdentity() || (version == 2 && connection != Phase.READY)) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
     }
     private void checkOpen() throws BridgeException { if (disposed) { throw new BridgeException(BridgeException.Code.STATE_INVALID); } }
-    private void clearData() { pending.clear(); chats.clear(); messages.clear(); active.clear(); nextChats = 0; nextMessages = 0; acceptedSavedRequest = 0; }
+    private boolean hasIdentity() { return version == 1 ? identity != null : account != null; }
+    private void clearData() {
+        pending.clear(); chats.clear(); messages.clear(); active.clear(); nextChats = 0; nextMessages = 0; acceptedSavedRequest = 0;
+        readerMessages.clear(); readerActive.clear(); selectedChat = 0; selection = 0; window = 0; incomingIndicator = 0;
+        searchQuery = ""; readerNext = Continuation.unknown(); directoryNext = Continuation.unknown();
+    }
     private void publish() {
         var visible = active.stream().map(messages::get).filter(Objects::nonNull)
                 .sorted(Comparator.comparingLong(Message::date).thenComparingLong(Message::id)).toList();
         snapshot = new Snapshot(generation, incoming, auth, identity, connection, List.copyOf(chats.values()), visible,
-                nextChats, nextMessages, acceptedSavedRequest, messages.size(), pending.size() + (authRequest == 0 ? 0 : 1), retryRemaining(), lastError, failure, disposed);
+                nextChats, nextMessages, acceptedSavedRequest, messages.size(), pending.size() + (authRequest == 0 ? 0 : 1), retryRemaining(), lastError, failure, disposed, readerView());
+    }
+    private void readerReady() throws BridgeException {
+        checkReady(); if (version != 2) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+    }
+    public synchronized void searchLoaded(String query) throws BridgeException {
+        readerReady();
+        try { BridgeData.text(query, 256); } catch (RuntimeException invalid) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        searchQuery = query; publish();
+    }
+    public synchronized Frame directoryPage(boolean first) throws BridgeException {
+        readerReady();
+        if (!first && directoryNext.state() != ContinuationState.AVAILABLE) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        return request(Target.CHATS, first ? 0 : directoryNext.cursor(), CHAT_PAGE);
+    }
+    public synchronized Frame selectChat(long chatId) throws BridgeException {
+        readerReady(); Chat chat = chats.get(chatId);
+        if (chat == null || chat.chatKind() != ChatKind.USER) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        try { selectionCounter = Math.incrementExact(selectionCounter); }
+        catch (ArithmeticException overflow) { throw fail(BridgeException.Code.STATE_INVALID); }
+        selectedChat = chatId; selection = selectionCounter; incomingIndicator = 0;
+        return historyPage(true);
+    }
+    public synchronized Frame historyPage(boolean latest) throws BridgeException {
+        readerReady();
+        if (selectedChat == 0 || (!latest && readerNext.state() != ContinuationState.AVAILABLE)) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        long cursor = latest ? 0 : readerNext.cursor();
+        pending.values().removeIf(p -> p.history() != null);
+        if (pending.size() >= MAX_PENDING) { throw fail(BridgeException.Code.OVERFLOW); }
+        try {
+            windowCounter = Math.incrementExact(windowCounter); window = windowCounter;
+            var query = new HistoryRequest(selectedChat, selection, window, cursor, MESSAGE_PAGE);
+            Frame frame = outgoing(query); pending.put(frame.requestId(), new Pending(null, nanoTime.getAsLong(), query));
+            latestWindow = latest; readerActive.clear(); readerNext = Continuation.unknown(); lastError = null;
+            if (latest) { incomingIndicator = 0; }
+            publish(); return frame;
+        } catch (ArithmeticException overflow) { throw fail(BridgeException.Code.STATE_INVALID); }
+    }
+    private void unsolicited(Frame frame) { if (frame.requestId() != 0) { throw BridgeData.invalid(); } }
+    private void applyHistory(long requestId, HistoryPage page) {
+        Pending p = pending.get(requestId);
+        if (p == null) { if (requestId > issued) { throw BridgeData.invalid(); } return; }
+        HistoryRequest q = p.history(); ready();
+        if (q == null || !hasIdentity() || page.chatId() != q.chatId() || page.selection() != q.selection() || page.window() != q.window()) { throw BridgeData.invalid(); }
+        pending.remove(requestId);
+        if (page.chatId() != selectedChat || page.selection() != selection || page.window() != window) { return; }
+        if (q.cursor() != 0 && page.next().state() == ContinuationState.AVAILABLE && page.next().cursor() == q.cursor()) { throw BridgeData.invalid(); }
+        readerActive.clear();
+        for (var message : page.rows()) {
+            if (expired(message)) { readerMessages.remove(message.key()); }
+            else { readerMessages.remove(message.key()); readerMessages.put(message.key(), message); readerActive.add(message.key()); }
+        }
+        readerNext = page.next(); trimReaderCache(); lastError = null;
+    }
+    private void invalidateHistory(long chatId) {
+        pending.values().removeIf(p -> p.history() != null && p.history().chatId() == chatId);
+        if (chatId == selectedChat) { readerNext = Continuation.unknown(); }
+    }
+    private void applyUpdate(MessageUpdate event) {
+        if (auth == null || auth.step() != Step.READY || account == null) { return; }
+        ReaderMessage m = event.message(); boolean known = readerMessages.containsKey(m.key());
+        if (event.update() == Update.EDIT && !known) { return; }
+        Chat chat = chats.get(m.chatId());
+        if (!known && m.chatId() != selectedChat && (chat == null || chat.chatKind() != ChatKind.USER)) { return; }
+        invalidateHistory(m.chatId());
+        if (expired(m)) { readerMessages.remove(m.key()); readerActive.remove(m.key()); return; }
+        readerMessages.remove(m.key()); readerMessages.put(m.key(), m);
+        if (m.chatId() == selectedChat && event.update() == Update.NEW && !known) {
+            if (latestWindow) {
+                readerActive.add(m.key());
+                readerActive.sort(Comparator.comparingLong((MessageKey key) -> readerMessages.get(key).date()).thenComparingLong(MessageKey::messageId));
+                while (readerActive.size() > MESSAGE_PAGE) { readerActive.removeFirst(); }
+            } else { incomingIndicator = Math.min(MAX_MESSAGES, incomingIndicator + 1); }
+        }
+        trimReaderCache();
+    }
+    private void trimReaderCache() {
+        while (readerMessages.size() > MAX_MESSAGES) {
+            var key = readerMessages.keySet().stream().filter(k -> !readerActive.contains(k)).findFirst().orElseThrow();
+            readerMessages.remove(key);
+        }
+    }
+    private ReaderView readerView() {
+        if (version != 2) { return null; }
+        var visible = readerActive.stream().map(readerMessages::get).filter(Objects::nonNull)
+                .sorted(Comparator.comparingLong(ReaderMessage::date).thenComparingLong(ReaderMessage::id)).toList();
+        String term = searchQuery.toLowerCase(Locale.ROOT);
+        var found = chats.values().stream().filter(c -> c.title().toLowerCase(Locale.ROOT).contains(term)).toList();
+        return new ReaderView(account, selectedChat, selection, window, latestWindow, visible, readerNext, directoryNext,
+                found, searchQuery, pending.values().stream().anyMatch(p -> p.history() != null), incomingIndicator, readerMessages.size());
     }
     private BridgeException fail(BridgeException.Code code) { failure = code; close(); return new BridgeException(code); }
     @Override public synchronized void close() {
-        disposed = true; queue.clear(); clearData(); auth = null; identity = null; authRequest = 0; retryNanos = 0; connection = Phase.OFFLINE; publish();
+        disposed = true; queue.clear(); clearData(); auth = null; identity = null; account = null; authRequest = 0; retryNanos = 0; connection = Phase.OFFLINE; publish();
     }
 }

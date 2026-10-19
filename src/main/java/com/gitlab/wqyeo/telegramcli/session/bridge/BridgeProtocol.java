@@ -13,6 +13,7 @@ import java.util.*;
 /** Explicit PRIVATE data codec. Not ordinary diagnostics, old lifecycle IPC or a TDLib dispatcher. */
 public final class BridgeProtocol {
     private static final byte[] MAGIC = "TGCBRG01".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] READER_MAGIC = "TGCBRG02".getBytes(StandardCharsets.US_ASCII);
     public static final int HEADER_BYTES = 45;
     private static final JsonMapper MAPPER = JsonMapper.builder(JsonFactory.builder()
             .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(6).maxStringLength(16384).maxNumberLength(20).build())
@@ -32,8 +33,9 @@ public final class BridgeProtocol {
             System.arraycopy(rest, 0, header, 1, rest.length);
             var buffer = ByteBuffer.wrap(header);
             byte[] magic = new byte[MAGIC.length]; buffer.get(magic);
-            if (!Arrays.equals(MAGIC, magic)) { throw invalid(); }
+            int version = Arrays.equals(MAGIC, magic) ? 1 : Arrays.equals(READER_MAGIC, magic) ? 2 : 0;
             Kind kind = Kind.fromCode(Byte.toUnsignedInt(buffer.get()));
+            if (!BridgeData.supports(version, kind)) { throw invalid(); }
             int length = buffer.getInt();
             UUID generation = new UUID(buffer.getLong(), buffer.getLong());
             long sequence = buffer.getLong(), request = buffer.getLong();
@@ -42,7 +44,7 @@ public final class BridgeProtocol {
             if (bytes.length != length) { throw invalid(); }
             String json = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-            return new Frame(generation, sequence, request, decode(kind, MAPPER.readTree(json)));
+            return new Frame(version, generation, sequence, request, decode(kind, MAPPER.readTree(json)));
         } catch (IOException | RuntimeException failure) { throw new BridgeException(BridgeException.Code.PROTOCOL_INVALID); }
         finally { if (bytes != null) { Arrays.fill(bytes, (byte) 0); } }
     }
@@ -53,7 +55,7 @@ public final class BridgeProtocol {
             if (frame == null) { throw invalid(); }
             bytes = MAPPER.writeValueAsBytes(encode(frame.payload()));
             if (bytes.length < 1 || bytes.length > frame.payload().kind().maxBytes()) { throw invalid(); }
-            byte[] header = ByteBuffer.allocate(HEADER_BYTES).put(MAGIC).put((byte) frame.payload().kind().code()).putInt(bytes.length)
+            byte[] header = ByteBuffer.allocate(HEADER_BYTES).put(frame.version() == 1 ? MAGIC : READER_MAGIC).put((byte) frame.payload().kind().code()).putInt(bytes.length)
                     .putLong(frame.generation().getMostSignificantBits()).putLong(frame.generation().getLeastSignificantBits())
                     .putLong(frame.sequence()).putLong(frame.requestId()).array();
             output.write(header); output.write(bytes); output.flush();
@@ -90,6 +92,25 @@ public final class BridgeProtocol {
             case Removed p -> { var ids = node.putArray("ids"); for (long id : p.ids()) { ids.add(id); } node.put("expired", p.expired()); }
             case Connection p -> node.put("phase", p.phase().name());
             case Failure p -> node.put("error", p.error().name());
+            case Account p -> { node.put("userId", p.userId()); node.put("displayName", p.displayName()); }
+            case Directory p -> {
+                var rows = node.putArray("rows");
+                for (var chat : p.rows()) { rows.addObject().put("id", chat.id()).put("title", chat.title()).put("chatKind", chat.chatKind().name()); }
+                continuation(node, p.next());
+            }
+            case HistoryRequest p -> {
+                context(node, p.chatId(), p.selection(), p.window()); node.put("cursor", p.cursor()); node.put("limit", p.limit());
+            }
+            case HistoryPage p -> {
+                context(node, p.chatId(), p.selection(), p.window()); var rows = node.putArray("rows");
+                for (var message : p.rows()) { encodeMessage(rows.addObject(), message); }
+                continuation(node, p.next());
+            }
+            case MessageUpdate p -> { node.put("update", p.update().name()); encodeMessage(node.putObject("message"), p.message()); }
+            case ChatRemoved p -> {
+                node.put("chatId", p.chatId()); var ids = node.putArray("ids");
+                for (long id : p.ids()) { ids.add(id); } node.put("expired", p.expired());
+            }
         }
         return node;
     }
@@ -133,7 +154,46 @@ public final class BridgeProtocol {
             }
             case CONNECTION -> { fields(node, "phase"); yield new Connection(Phase.valueOf(string(node, "phase"))); }
             case FAILURE -> { fields(node, "error"); yield new Failure(BridgeData.Error.valueOf(string(node, "error"))); }
+            case ACCOUNT -> { fields(node, "userId", "displayName"); yield new Account(number(node, "userId"), string(node, "displayName")); }
+            case DIRECTORY -> {
+                fields(node, "rows", "continuation", "cursor"); var chats = new ArrayList<Chat>();
+                for (var row : array(node, "rows", CHAT_PAGE)) {
+                    fields(row, "id", "title", "chatKind"); chats.add(new Chat(number(row, "id"), string(row, "title"), ChatKind.valueOf(string(row, "chatKind"))));
+                }
+                yield new Directory(chats, continuation(node));
+            }
+            case HISTORY_REQUEST -> {
+                fields(node, "chatId", "selection", "window", "cursor", "limit");
+                yield new HistoryRequest(number(node, "chatId"), number(node, "selection"), number(node, "window"), number(node, "cursor"), integer(node, "limit"));
+            }
+            case HISTORY_PAGE -> {
+                fields(node, "chatId", "selection", "window", "rows", "continuation", "cursor"); var rows = new ArrayList<ReaderMessage>();
+                for (var row : array(node, "rows", MESSAGE_PAGE)) { rows.add(decodeMessage(row)); }
+                yield new HistoryPage(number(node, "chatId"), number(node, "selection"), number(node, "window"), rows, continuation(node));
+            }
+            case MESSAGE_UPDATE -> {
+                fields(node, "update", "message"); yield new MessageUpdate(Update.valueOf(string(node, "update")), decodeMessage(node.get("message")));
+            }
+            case CHAT_REMOVED -> {
+                fields(node, "chatId", "ids", "expired"); var ids = new ArrayList<Long>();
+                for (var id : array(node, "ids", MAX_MESSAGES)) { ids.add(longValue(id)); }
+                yield new ChatRemoved(number(node, "chatId"), ids, bool(node, "expired"));
+            }
         };
+    }
+    private static void context(ObjectNode node, long chatId, long selection, long window) {
+        node.put("chatId", chatId); node.put("selection", selection); node.put("window", window);
+    }
+    private static void continuation(ObjectNode node, Continuation value) { node.put("continuation", value.state().name()); node.put("cursor", value.cursor()); }
+    private static Continuation continuation(JsonNode node) { return new Continuation(ContinuationState.valueOf(string(node, "continuation")), number(node, "cursor")); }
+    private static void encodeMessage(ObjectNode node, ReaderMessage m) {
+        node.put("chatId", m.chatId()).put("id", m.id()).put("sender", m.sender()).put("text", m.text()).put("date", m.date())
+                .put("expiresAt", m.expiresAt()).put("edited", m.edited()).put("truncated", m.truncated()).put("content", m.content().name());
+    }
+    private static ReaderMessage decodeMessage(JsonNode node) {
+        fields(node, "chatId", "id", "sender", "text", "date", "expiresAt", "edited", "truncated", "content");
+        return new ReaderMessage(number(node, "chatId"), number(node, "id"), string(node, "sender"), string(node, "text"), number(node, "date"),
+                number(node, "expiresAt"), bool(node, "edited"), bool(node, "truncated"), Content.valueOf(string(node, "content")));
     }
     private static void fields(JsonNode node, String... names) {
         if (node == null || !node.isObject() || node.size() != names.length
