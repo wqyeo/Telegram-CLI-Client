@@ -56,8 +56,11 @@ Subject to approval and successful preflight:
    Original source, dependency/cache and toolchain mounts remain read-only; scratch output is
    isolated. No image pull, install, network, host-toolchain fallback or runtime/client action.
 
-This transformation is deliberately not supplied as a ready-to-run shell command: the
-FileManager input/feature/header binding and execution approval are not established yet.
+A private, non-executed candidate argument vector now preserves the recorded dispatcher
+vector with exactly three substitutions: target source, dependency output and preprocessed
+output. No compiler flag was added or removed. This is an argument derivation, not an
+accepted FileManager recipe or mounted-input preflight. No runnable container invocation is
+supplied: FileManager's feature/header binding and execution approval remain unestablished.
 
 ## Preflight and evidence contract
 

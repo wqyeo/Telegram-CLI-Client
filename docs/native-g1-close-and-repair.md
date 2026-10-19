@@ -13,7 +13,10 @@ The query packet reports 111 complete definitions and four explicit whole-functi
 A separate addendum checked 16 complete definitions/ranges in five archive-exact files for
 scheduler dispatch, deferred destruction and Config/FileReference manager disposal. Local
 parent receipts remain private; this publication is not independent public runtime evidence.
-The four raw-function exclusions remain blockers, not cured by the addendum.
+The four raw-function exclusions remain blockers, not cured by the addendum. A later
+[disposal/client trace](native-g1-disposal-and-client-close.md) adds concrete promise/event
+destruction behavior and distinguishes Td's internal Closed from the stronger, conditional
+native ClientManager outward Closed boundary; it still does not close the resource roster.
 
 ## Dispatch is not uniformly deferred
 
@@ -53,8 +56,11 @@ The selected source sequence, not an executed lifecycle, is:
    reference. The four excluded functions prevent whole terminal/error-path certification.
 5. Td actor-reference phases eventually reset owned manager objects, including FileManager,
    then call `Global::close_all`. That method delegates to TdDb close and clears StateManager.
-6. A later reference phase produces authorizationStateClosed; stop-count processing controls
-   Td actor stop. No selected step is a worker/scheduler join or Java lease-release proof.
+6. A later reference phase produces Td's internal authorizationStateClosed; stop-count
+   processing controls Td actor stop. ClientManager does not simply forward that first
+   notification: its outward Closed follows a callback-destruction marker and mapping removal
+   in the multithreaded branch, as detailed in the disposal/client trace. These Td steps alone
+   are not worker/scheduler join or Java lease-release proof.
 
 The counters are useful native ownership machinery, but not a complete G1 resource roster.
 In particular, FileLoadManager is created without the Td shared parent passed to the other
@@ -92,7 +98,9 @@ in the subsequently destroyed nodes. Its `on_query_result` checks Global Close B
 reducing active-query counts. A zero-active-count test therefore cannot stand in for Close
 completion/disposal. ConfigManager hangup reduces its own reference count, drops its recoverer
 and stops at zero; that is not a certificate that every consumer effect or promise callback
-has completed. Exact promise/event destruction and client/worker join remain named edges.
+has completed. Concrete promise/event destruction and conditional native-client joins are
+now traced in the disposal/client document; the transitive disposal roster and actual
+profile-bound worker/resource stop remain unclosed.
 
 ## Repair/reload dependency graph
 
