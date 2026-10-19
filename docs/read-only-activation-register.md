@@ -6,7 +6,9 @@ existing G1 findings establishes the gaps below; no new native investigation or 
 performed. The [shared-reader proposal](shared-reader-contract-proposal.md) specifies the
 smallest application-side implementation package. The subsequent
 [P1 PUBLIC implementation](ordinary-reader-p1.md) supplies that reader plumbing; it does
-not close the native or genuine frontend/activation rows.
+not close the native or genuine frontend/activation rows. Incremental execution now starts
+with the [passive-reader activation contract](read-only-activation-contract.md): its native
+effect policy is selected, but checkpoint 1 and the coupled activation contracts remain open.
 
 ## Product outcome and authority
 
@@ -131,7 +133,14 @@ unselected. Existing fixture/request/transport budgets do not establish them.
 
 ## Immediate handoff
 
-The register and contract proposal complete the first planning deliverable only. They do
-not remove a blocker by themselves. The next code-sized increment is P1, with changes and
-acceptance cases named in the proposal; no further generic native source inventory is the
-default next action. Native/account execution, sends and release work remain gated.
+P1 and the descriptor9 five-role source/component increment are published. The current
+execution checkpoint is the bounded activation contract, not another reader fixture. The
+operator selected passive native effects: no unsolicited presence/default-reaction/top-peers
+changes, and no clearing or replaying incompatible pending intent. Those exclusions are not
+yet implemented; exact marker/state rules, D3 and actual-stop observations remain open.
+
+The contract names a current-input FileManager preprocessing request to address four specific
+repair/restart/Close source gaps; execution still needs its explicit approval. Full-local and
+scheduler gaps are separate. Do not mark checkpoint 1 complete or begin activation because
+a policy document was published. Coherent SDK, actual PUBLIC engine and genuine acceptance
+remain separate E1/E2/F gates; sending and release work remain out of scope.
