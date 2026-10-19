@@ -20,6 +20,11 @@ reopen. The [activation-blocker register](docs/read-only-activation-register.md)
 [shared-reader contract proposal](docs/shared-reader-contract-proposal.md) define the remaining
 work; they do not enable a real account client or approve native/account execution.
 
+[P1 ordinary-reader plumbing](docs/ordinary-reader-p1.md) now supports chat selection,
+loaded-directory search, history pages and incoming updates through the shared PUBLIC
+in-memory/process fixture API. This is implemented code with no new CLI/TUI entry point;
+it does not remove the native activation blockers or make account access available.
+
 ## Build and try
 
 Use a full JDK 25. The Maven Wrapper downloads pinned Maven 3.9.16 and verifies

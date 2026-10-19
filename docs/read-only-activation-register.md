@@ -4,7 +4,9 @@ Status: **implementation-facing register; no real activation or revised policy a
 Baseline: application commit `a313c00`. Inspection of the application/bridge sources and the
 existing G1 findings establishes the gaps below; no new native investigation or runtime was
 performed. The [shared-reader proposal](shared-reader-contract-proposal.md) specifies the
-smallest application-side implementation package.
+smallest application-side implementation package. The subsequent
+[P1 PUBLIC implementation](ordinary-reader-p1.md) supplies that reader plumbing; it does
+not close the native or genuine frontend/activation rows.
 
 ## Product outcome and authority
 
@@ -28,9 +30,9 @@ remains experimental: `integrated_engine_accepted=false`; the factory remains fe
 
 | Current code | Reuse / concrete limitation |
 |---|---|
-| `session/bridge/BridgeData.java`, `BridgeProtocol.java` | Bounded, redacted app-owned data and explicit codec. Requests support only CHATS/SAVED_MESSAGES; message pages/updates lack chat identity. |
-| `session/bridge/BridgeCoordinator.java` | Ordered generation-scoped ingress, auth tokens, pending requests, expiry/revocation and bounded caches. Message keys are message ID alone; Changed only updates already cached messages; no selected conversation or ordinary incoming-message insertion. |
-| `application/ReadOnlyPreviewSession.java`, `ProcessReadOnlySession.java`, `SyntheticReadOnlySession.java` | Existing shared frontend seam and PUBLIC implementations. Initial load and pagination explicitly target Saved Messages; auth advancement uses generated fixture bytes. |
+| `session/bridge/BridgeData.java`, `BridgeProtocol.java` | Bounded, redacted app-owned data and explicit codec. Legacy v1 stays CHATS/SAVED_MESSAGES. P1 v2 adds ordinary history, account identity without Saved, scoped updates and explicit continuations. |
+| `session/bridge/BridgeCoordinator.java` | Ordered generation-scoped ingress, auth tokens, pending requests, expiry/revocation and bounded caches. P1 v2 adds composite keys, selection/window tokens, bounded causal invalidation, loaded search and new-message insertion. Genuine native authority remains outside this PUBLIC core. |
+| `application/ReadOnlyPreviewSession.java`, `ProcessReadOnlySession.java`, `SyntheticReadOnlySession.java` | Existing shared frontend seam and PUBLIC implementations. Legacy construction still targets Saved. Explicit ordinaryReader factories load a directory and support user-chat selection/history through the same facade. Auth advancement remains generated PUBLIC bytes. |
 | `session/bridge/ProcessBridgeTransport.java` | Bounded PUBLIC pipe lifecycle with ack/EOF/process/readers. Its fixture handshake and clean flag do not establish genuine native stop. |
 | `telegram/TelegramEngine.java`, `model/EngineEvent.java` | Original demo event seam. It does not express discovery/history/auth/stop; do not build a second ordinary-reader state machine around it. |
 | `session/ProfileStore.java` | Sole Java lease, retained directory identity and native-live claim primitives. Genuine native-stop/worker/lease orchestration is not joined. |
@@ -50,7 +52,7 @@ closed only by its specified implementation/evidence, not by producing another d
 | **A4 — Stop, sole lease and reopen** | FileLoad/retry/GC/transfer descendants, shared native implementation ownership and actual worker stop are not composed. Current PUBLIC close success is insufficient. | A closed reachable resource roster and genuine generation/profile-bound positive stop observation; compose with ack, EOF, zero exit and readers before permitted lease release. Uncertain Close retains honest ownership; kill/timeout/removed handle is not clean flush or stop confirmation. E2 must exercise actual resources and same-store reopen. |
 | **A5 — Privacy and local input** | Genuine worker launch/input/log containment is not joined; native log/fatal/IPC/temp surfaces remain unresolved. | Audit only the reachable launch/auth/read/close path; install containment before sensitive initialization, fixed/redacted errors and bounded private IPC, local credential acquisition, best-effort owned-buffer wiping, no private account content in evidence. Do not repurpose fixture auth advancement for real secrets. |
 | **A6 — Genuine guarded worker/adapter** | No operational adapter connects the trusted lease/context to real TDLib auth/read requests and the shared core. | Explicit NEW versus EXISTING worker orchestration, lazy genuine provider, one-use native claim, closed allowlist of typed operations and SDK-to-app translation. No arbitrary TDLib-function gateway; worker sharing/ownership must satisfy A4. Keep the factory fenced until all applicable native gates pass. |
-| **A7 — Ordinary shared reader** | Saved-only request shape, unscoped messages, no selection/search/ordinary update insertion. The app cannot express the milestone today. | Implement package P1 in the proposal: typed conversation/request identities, bounded directory/selection/history, causal invalidation and ordinary incoming updates in the existing core. Focused SDK-free/PUBLIC checks; CLI and TUI consume this core, not separate reducers. |
+| **A7 — Ordinary shared reader** | P1 PUBLIC code now expresses ordinary selection/search/history/updates in the existing core; this is not an operational account client. | The [P1 implementation](ordinary-reader-p1.md) and its focused SDK-free/PUBLIC checks cover the application subset. Genuine adapter semantics and CLI/TUI consumers remain A6/A8; no separate reducer or live-use acceptance is inferred. |
 | **A8 — Auth and frontend integration** | Fixture prompts are not operational login; no ordinary account-backed CLI entry point exists. Existing state labels do not encode native admission/actual stop. | Map supported auth prompts and errors without resubmitting consumed secrets; expose truthful activation/close phases and the reader operations. CLI first, then the existing TUI; no redesign or auto-acceptance of unsupported flows. Depends on A5–A7 and native authority gates. |
 | **A9 — Native acceptance evidence** | Source/leaf checks are not a coherent SDK or actual engine. The original descriptor6 reserved-gap failure is UNDETERMINED. | Explain that failure or obtain an explicit residual disposition before the relevant acceptance gate. Separately approve E1 build/link, then E2 disposable PUBLIC actual-engine checks. Failures remain blockers; no default SDK replacement, image pull or fixture pass relabeled engine acceptance. |
 | **A10 — Genuine read-only journey** | No real authentication, ordinary history/update or authenticated reopen has been demonstrated. | After A1–A9 and explicit F approval, operator-local acceptance of every journey step above. Record redacted outcomes only. Failure does not authorize reset, fresh login fallback or sends. |
@@ -61,7 +63,7 @@ A1, A2 and A4 are the dominant native critical path. **A proved minimal safe nat
 slice has not yet been established.** The open integer/schema/effect families must be grouped
 into compatible validation/ownership families, not converted into 120 more isolated source
 milestones. A5/A6 then have to connect privacy and the genuine worker to those boundaries.
-P1 is a bounded, necessary application delta that can be implemented independently; after it,
+P1 is a bounded, necessary application delta implemented independently with PUBLIC inputs; after it,
 additional fixture/UI expansion is not the default response to blocked native activation.
 No delivery date or claim that only an SDK build remains is justified by this register.
 
@@ -71,8 +73,8 @@ The proposal recommends the smallest first product surface: known ordinary one-t
 conversations, loaded-directory search, explicit earlier pages and selected-chat updates.
 Other chat/content types must be represented as unsupported where necessary, not misparsed
 as text or used to claim a complete client. These recommendations do **not** remove native
-initialization/replay obligations from A1/A2. Their exact application capabilities are to be
-settled with the contract before coding, rather than inferred from whatever the fixture supports.
+initialization/replay obligations from A1/A2. P1 selects these capabilities explicitly;
+broader conversation/search and native operation mappings remain separately scoped.
 
 Read-only means no exposed send/reply/edit/delete/reaction/logout/read-marking command. It is
 not a promise of zero server-side effects from authentication or mandatory TDLib traffic.
@@ -93,8 +95,8 @@ No privacy, stop, lease or original-state guarantee is deferred merely to reach 
 ## Implementation order and stop conditions
 
 1. **P1: ordinary-reader contract/core delta (A7).** Use existing fixtures and core; no new demo,
-   provider, native launcher or SDK dependency. Resolve the proposal's small application-side
-   choices first. This enables the journey to be represented, not a claim that it is live.
+   provider, native launcher or SDK dependency. This PUBLIC application subset is implemented;
+   it enables the journey to be represented, not a claim that it is live.
 2. **P2: native activation package (A1–A5).** Convert existing findings into exact guard/owner/
    stop placements. Investigate only a named unresolved edge whose resolution changes those
    placements. If no bounded safe slice can be established, stop and report the guarantee/scope

@@ -44,7 +44,8 @@ public final class BridgePipeProtocol {
             if (magic.length != 8) { throw invalid(); }
             input.unread(magic);
             if (Arrays.equals(magic, MAGIC)) { return Namespace.PIPE; }
-            if (Arrays.equals(magic, "TGCBRG01".getBytes(StandardCharsets.US_ASCII))) { return Namespace.TYPED; }
+            if (Arrays.equals(magic, "TGCBRG01".getBytes(StandardCharsets.US_ASCII))
+                    || Arrays.equals(magic, "TGCBRG02".getBytes(StandardCharsets.US_ASCII))) { return Namespace.TYPED; }
             if (Arrays.equals(magic, "TGCAUT01".getBytes(StandardCharsets.US_ASCII))) { return Namespace.AUTH; }
             throw invalid();
         } catch (IOException failure) { throw invalid(); }

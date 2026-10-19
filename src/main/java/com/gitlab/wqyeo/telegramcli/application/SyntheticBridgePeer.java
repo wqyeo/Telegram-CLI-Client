@@ -14,6 +14,8 @@ final class SyntheticBridgePeer implements AutoCloseable {
     static final long SAVED_ID = 42;
     @FunctionalInterface interface Sink { void accept(Frame frame) throws BridgeException; }
     private final UUID generation;
+    private final int version;
+    private final Map<Long, NavigableMap<Long, ReaderMessage>> readerMessages = new LinkedHashMap<>();
     private final Clock clock;
     private final LongSupplier nanos;
     private final Sink sink;
@@ -25,8 +27,20 @@ final class SyntheticBridgePeer implements AutoCloseable {
     private int authAttempts, readRequests, controlRequests;
     private boolean retried, closed, offline;
 
-    SyntheticBridgePeer(UUID generation, Clock clock, LongSupplier nanos, Sink sink, SyntheticReadOnlySession.Scenario scenario) {
+    SyntheticBridgePeer(UUID generation, Clock clock, LongSupplier nanos, Sink sink, SyntheticReadOnlySession.Scenario scenario) { this(generation, clock, nanos, sink, scenario, 1); }
+    SyntheticBridgePeer(UUID generation, Clock clock, LongSupplier nanos, Sink sink, SyntheticReadOnlySession.Scenario scenario, int version) {
+        this.version = version;
         this.generation = generation; this.clock = clock; this.nanos = nanos; this.sink = sink; this.scenario = scenario;
+        if (version == 2) {
+            chats.add(new Chat(1001, "PUBLIC Alex", ChatKind.USER)); chats.add(new Chat(1002, "PUBLIC Blair", ChatKind.USER));
+            chats.add(new Chat(-77, "PUBLIC unsupported group", ChatKind.GROUP));
+            for (long chat : List.of(1001L, 1002L)) {
+                var rows = new TreeMap<Long, ReaderMessage>(); readerMessages.put(chat, rows);
+                for (long id = 1; id <= 25; id++) { rows.put(id, ReaderMessage.project(chat, id, chat == 1001 ? "PUBLIC Alex" : "PUBLIC Blair",
+                        "PUBLIC conversation " + chat + " message " + id, 1_700_000_000L + id, 0, false, Content.TEXT)); }
+            }
+            return;
+        }
         chats.add(new Chat(SAVED_ID, "Saved Messages", ChatKind.USER));
         for (int i = 1; i < MAX_CHATS; i++) {
             chats.add(new Chat(-i, i % 7 == 0 ? "Synthetic 团队 " + i : "Synthetic chat " + i,
@@ -82,7 +96,8 @@ final class SyntheticBridgePeer implements AutoCloseable {
                 case EMAIL_CODE -> prompt(Step.PASSWORD, receivedRequest);
                 case PASSWORD -> {
                     prompt(Step.READY, receivedRequest);
-                    emit(new Identity(1, SAVED_ID, "Synthetic operator"), 0); emit(new Connection(Phase.READY), 0);
+                    emit(version == 2 ? new Account(1, "PUBLIC operator") : new Identity(1, SAVED_ID, "Synthetic operator"), 0);
+                    emit(new Connection(Phase.READY), 0);
                 }
                 default -> throw invalid();
             }
@@ -91,7 +106,7 @@ final class SyntheticBridgePeer implements AutoCloseable {
     }
     void receive(Frame original) throws BridgeException {
         open(); Frame frame = copy(original);
-        if (!generation.equals(frame.generation()) || frame.sequence() != receivedSequence + 1 || frame.requestId() <= receivedRequest) { throw invalid(); }
+        if (frame.version() != version || !generation.equals(frame.generation()) || frame.sequence() != receivedSequence + 1 || frame.requestId() <= receivedRequest) { throw invalid(); }
         receivedSequence = frame.sequence(); receivedRequest = frame.requestId();
         switch (frame.payload()) {
             case Request request -> {
@@ -100,7 +115,9 @@ final class SyntheticBridgePeer implements AutoCloseable {
                 if (request.target() == Target.CHATS) {
                     if (request.cursor() > chats.size()) { emit(new Failure(BridgeData.Error.NOT_AVAILABLE), frame.requestId()); return; }
                     int start = (int) request.cursor(), end = Math.min(chats.size(), start + request.limit());
-                    emit(new Chats(chats.subList(start, end), end < chats.size() ? end : 0), frame.requestId());
+                    emit(version == 2 ? new Directory(chats.subList(start, end), end < chats.size()
+                            ? new Continuation(ContinuationState.AVAILABLE, end) : Continuation.end())
+                            : new Chats(chats.subList(start, end), end < chats.size() ? end : 0), frame.requestId());
                 } else {
                     if (request.cursor() > MAX_MESSAGES + 1L) { emit(new Failure(BridgeData.Error.NOT_AVAILABLE), frame.requestId()); return; }
                     long before = request.cursor() == 0 ? MAX_MESSAGES + 1L : request.cursor();
@@ -109,6 +126,18 @@ final class SyntheticBridgePeer implements AutoCloseable {
                             ? rows.getLast().id() : 0;
                     emit(new Messages(rows, next), frame.requestId());
                 }
+            }
+            case HistoryRequest query -> {
+                readRequests = Math.incrementExact(readRequests);
+                if (auth == null || auth.step() != Step.READY || offline || !readerMessages.containsKey(query.chatId())) {
+                    emit(new Failure(BridgeData.Error.NOT_AVAILABLE), frame.requestId()); return;
+                }
+                var source = readerMessages.get(query.chatId());
+                var rows = (query.cursor() == 0 ? source : source.headMap(query.cursor(), false)).descendingMap().values().stream()
+                        .filter(m -> !expired(m)).limit(query.limit()).toList();
+                boolean more = !rows.isEmpty() && source.headMap(rows.getLast().id(), false).values().stream().anyMatch(m -> !expired(m));
+                emit(new HistoryPage(query.chatId(), query.selection(), query.window(), rows, more
+                        ? new Continuation(ContinuationState.AVAILABLE, rows.getLast().id()) : Continuation.end()), frame.requestId());
             }
             case Control control -> {
                 controlRequests = Math.incrementExact(controlRequests);
@@ -123,8 +152,26 @@ final class SyntheticBridgePeer implements AutoCloseable {
     }
     void tick() throws BridgeException {
         if (closed || auth == null || auth.step() != Step.READY) { return; }
+        if (version == 2) {
+            for (var entry : readerMessages.entrySet()) {
+                var ids = entry.getValue().values().stream().filter(this::expired).map(ReaderMessage::id).toList();
+                if (!ids.isEmpty()) { for (long id : ids) { entry.getValue().remove(id); } emit(new ChatRemoved(entry.getKey(), ids, true), 0); }
+            }
+            return;
+        }
         var expired = messages.values().stream().filter(this::expired).map(Message::id).toList();
         if (!expired.isEmpty()) { for (long id : expired) { messages.remove(id); } emit(new Removed(expired, true), 0); }
+    }
+    private boolean expired(ReaderMessage message) { return message.expiresAt() != 0 && message.expiresAt() <= clock.instant().getEpochSecond(); }
+    void readerUpdate(long chatId, long id, String text, long expiresAt, Update update) throws BridgeException {
+        ready(); var rows = readerMessages.get(chatId); if (version != 2 || rows == null || (update == Update.EDIT && !rows.containsKey(id))) { throw invalid(); }
+        var message = ReaderMessage.project(chatId, id, chatId == 1001 ? "PUBLIC Alex" : "PUBLIC Blair", text, 1_700_000_000L + id,
+                expiresAt, update == Update.EDIT, Content.TEXT);
+        rows.put(id, message); emit(new MessageUpdate(update, message), 0);
+    }
+    void readerRemove(long chatId, long id) throws BridgeException {
+        ready(); var rows = readerMessages.get(chatId); if (version != 2 || rows == null) { throw invalid(); }
+        rows.remove(id); emit(new ChatRemoved(chatId, List.of(id), false), 0);
     }
     private boolean expired(Message message) { return message.expiresAt() != 0 && message.expiresAt() <= clock.instant().getEpochSecond(); }
     void edit(long id, String text, long expiresAt) throws BridgeException {
@@ -144,7 +191,7 @@ final class SyntheticBridgePeer implements AutoCloseable {
         emit(auth, 0);
     }
     private void prompt(Step step, long request) throws BridgeException { auth = new Auth(step, UUID.randomUUID(), 0, Unsupported.NONE); emit(auth, request); }
-    private void emit(Payload payload, long request) throws BridgeException { sink.accept(copy(new Frame(generation, ++sequence, request, payload))); }
+    private void emit(Payload payload, long request) throws BridgeException { sink.accept(copy(new Frame(version, generation, sequence = Math.incrementExact(sequence), request, payload))); }
     static Frame copy(Frame frame) throws BridgeException {
         byte[] bytes = null;
         try (var output = new WipingOutput()) {
@@ -157,7 +204,7 @@ final class SyntheticBridgePeer implements AutoCloseable {
     private void open() throws BridgeException { if (closed) { throw invalid(); } }
     private void ready() throws BridgeException { open(); if (auth == null || auth.step() != Step.READY) { throw invalid(); } }
     private static BridgeException invalid() { return new BridgeException(BridgeException.Code.PROTOCOL_INVALID); }
-    @Override public void close() { closed = true; auth = null; chats.clear(); messages.clear(); }
+    @Override public void close() { closed = true; auth = null; chats.clear(); messages.clear(); readerMessages.clear(); }
     @JsonValue public String redacted() { return "[REDACTED synthetic peer]"; }
     @Override public String toString() { return redacted(); }
     private static final class WipingOutput extends ByteArrayOutputStream {

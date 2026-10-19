@@ -1,9 +1,11 @@
 # Ordinary-conversation shared reader: contract proposal
 
-Status: **concrete proposal, not implemented Java API, wire ABI or native activation**.
-Baseline inspection: `a313c00`. This closes the proposal deliverable from the
-[activation-blocker register](read-only-activation-register.md), not blocker A7 itself.
-Names below are working names. No application/native code or existing protocol was changed.
+Status: the [P1 PUBLIC implementation](ordinary-reader-p1.md) now supplies the application
+reader subset and its exact v2 wire table. **Native activation and the genuine-authority
+parts below remain unimplemented.** This document retains the broader intended contract;
+working names are not a claim that every genuine integration field/API has shipped.
+Original proposal inspection baseline: `a313c00`; see the
+[activation-blocker register](read-only-activation-register.md) for remaining blockers.
 
 ## Reuse the existing bridge core; do not start another engine abstraction
 
@@ -27,8 +29,8 @@ Recommended minimum for the first controlled milestone:
 - Load an earlier page or return to latest; receive selected-chat new/edit/delete/expiry updates.
 - Refresh, cancel a logical request and Close honestly.
 
-This is a recommendation to settle before P1 implementation, not silent exclusion of groups
-or server search. Unsupported chat/content capabilities must be explicit. Loaded-only search
+P1 selects this PUBLIC application scope explicitly; it does not implement groups or
+server search. Unsupported chat/content capabilities must be explicit. Loaded-only search
 must not claim a complete account-wide or server search; paginating the directory may evict
 older retained entries under the existing bound. No result means 'not in loaded results',
 not 'Telegram has no such conversation'.
@@ -148,16 +150,16 @@ The current TGCBRG01 codec requires exact fields and has no chat scope on messag
 Changing those meanings is not backward-compatible. Recommend an explicit revised typed
 bridge version for the new shape, with strict dispatch to the appropriate decoder and no
 silent downgrade or old-message reinterpretation. Keep legacy PUBLIC fixtures recognizable;
-reject mixed namespaces/versions. Exact magic bytes, fields and migration mechanics need a
-small wire table before implementation. G1's separate 112/120-byte storage record is unchanged.
+reject mixed typed versions. The subsequent [P1 wire table](ordinary-reader-p1.md#typed-wire-table)
+records TGCBRG02 and its exact fields alongside preserved legacy TGCBRG01. G1's separate 112/120-byte storage record is unchanged.
 
 Existing preview request/auth/transport budgets must not become production G1 readiness or
 native-stop timeouts by accident. Logical expiry removes publication eligibility, not native
 resources; failure/forced process death cannot manufacture clean Close or lease release.
 
-## P1: the next code-sized package
+## P1: implemented PUBLIC application subset
 
-Recommended scope, after settling the capability/version choices:
+The implementation evolves these existing locations; native authority is not included:
 
 | Existing location | Necessary delta |
 |---|---|
@@ -181,16 +183,17 @@ Focused acceptance cases belong in existing coordinator/protocol/session test lo
 - Bounds, Unicode projection/redaction and incompatible wire versions fail/behave explicitly.
 - Legacy fixture-only entry points remain fixture-only; no real provider/native loading occurs.
 
-No tests were added or run for this proposal. Existing historical counts are not a claim
-that P1 has shipped.
+The original proposal added no tests. The subsequent P1 code adds focused ordinary-reader
+core/protocol and shared PUBLIC session tests; their commands and evidence boundary are
+listed in the [implementation note](ordinary-reader-p1.md). Historical counts do not prove
+current native functionality.
 
-## Decisions to settle, rather than another investigation campaign
+## Remaining integration choices
 
-Recommend: **evolve the existing bridge; first support known one-to-one text chats with
-loaded-directory search; version the changed typed payloads explicitly; preserve legacy
-fixtures behind their current PUBLIC seam**. Broader chat/server-search capability may be
+P1 **evolves the existing bridge, supports known one-to-one text chats with loaded-directory
+search, versions the changed typed payloads explicitly, and preserves legacy PUBLIC fixtures**. Broader chat/server-search capability may be
 chosen, but needs additional adapter/effect/cursor scope before coding.
 
-The implementation request can be bounded to P1's files and acceptance cases above, with
-SDK-free defaults and the native factory still fenced. A1–A6 remain genuine activation
+P1 retains SDK-free defaults and the native factory fence. Further fixture/UI expansion is
+not a substitute for a bounded native integration package. A1–A6 remain genuine activation
 blockers; P1 is product plumbing toward the read-only journey, not a workaround for them.

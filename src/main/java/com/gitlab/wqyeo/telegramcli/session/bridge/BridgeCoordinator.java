@@ -23,9 +23,10 @@ public final class BridgeCoordinator implements AutoCloseable {
     /** PUBLIC reader projection only; disposal never asserts native-stop acceptance. */
     public record ReaderView(Account account, long chatId, long selection, long window, boolean latestWindow,
                              List<ReaderMessage> messages, Continuation next, Continuation directoryNext,
-                             List<Chat> searchResults, String searchQuery, boolean loading, int incomingIndicator, int retainedMessages) {
+                             long requestedHistoryRequest, long acceptedHistoryRequest, List<Chat> searchResults, String searchQuery, boolean loading, int incomingIndicator, int retainedMessages) {
         public ReaderView { messages = List.copyOf(messages); searchResults = List.copyOf(searchResults); }
         public String searchCoverage() { return "LOADED_ONLY"; }
+        public Set<ChatKind> supportedChatKinds() { return Set.of(ChatKind.USER); }
         public boolean nativeStopAccepted() { return false; }
         @JsonValue public String redacted() { return "[REDACTED PUBLIC reader view]"; }
         @Override public String toString() { return redacted(); }
@@ -37,7 +38,7 @@ public final class BridgeCoordinator implements AutoCloseable {
     private Account account;
     private final LinkedHashMap<MessageKey, ReaderMessage> readerMessages = new LinkedHashMap<>();
     private final List<MessageKey> readerActive = new ArrayList<>();
-    private long selectedChat, selectionCounter, selection, windowCounter, window;
+    private long selectedChat, selectionCounter, selection, windowCounter, window, requestedHistoryRequest, acceptedHistoryRequest;
     private boolean latestWindow;
     private int incomingIndicator;
     private String searchQuery = "";
@@ -275,6 +276,7 @@ public final class BridgeCoordinator implements AutoCloseable {
     private void clearData() {
         pending.clear(); chats.clear(); messages.clear(); active.clear(); nextChats = 0; nextMessages = 0; acceptedSavedRequest = 0;
         readerMessages.clear(); readerActive.clear(); selectedChat = 0; selection = 0; window = 0; incomingIndicator = 0;
+        requestedHistoryRequest = 0; acceptedHistoryRequest = 0; latestWindow = false;
         searchQuery = ""; readerNext = Continuation.unknown(); directoryNext = Continuation.unknown();
     }
     private void publish() {
@@ -298,7 +300,10 @@ public final class BridgeCoordinator implements AutoCloseable {
     }
     public synchronized Frame selectChat(long chatId) throws BridgeException {
         readerReady(); Chat chat = chats.get(chatId);
-        if (chat == null || chat.chatKind() != ChatKind.USER) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        if (chat == null || chat.chatKind() != ChatKind.USER) {
+            lastError = chat == null ? BridgeData.Error.NOT_AVAILABLE : BridgeData.Error.UNSUPPORTED; publish();
+            throw new BridgeException(BridgeException.Code.STATE_INVALID);
+        }
         try { selectionCounter = Math.incrementExact(selectionCounter); }
         catch (ArithmeticException overflow) { throw fail(BridgeException.Code.STATE_INVALID); }
         selectedChat = chatId; selection = selectionCounter; incomingIndicator = 0;
@@ -314,10 +319,16 @@ public final class BridgeCoordinator implements AutoCloseable {
             windowCounter = Math.incrementExact(windowCounter); window = windowCounter;
             var query = new HistoryRequest(selectedChat, selection, window, cursor, MESSAGE_PAGE);
             Frame frame = outgoing(query); pending.put(frame.requestId(), new Pending(null, nanoTime.getAsLong(), query));
+            requestedHistoryRequest = frame.requestId();
             latestWindow = latest; readerActive.clear(); readerNext = Continuation.unknown(); lastError = null;
             if (latest) { incomingIndicator = 0; }
             publish(); return frame;
         } catch (ArithmeticException overflow) { throw fail(BridgeException.Code.STATE_INVALID); }
+    }
+    public synchronized Frame cancelRead(long requestId) throws BridgeException {
+        checkOpen();
+        if (requestId == authRequest && authRequest != 0) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        return control(Action.CANCEL, requestId);
     }
     private void unsolicited(Frame frame) { if (frame.requestId() != 0) { throw BridgeData.invalid(); } }
     private void applyHistory(long requestId, HistoryPage page) {
@@ -333,7 +344,7 @@ public final class BridgeCoordinator implements AutoCloseable {
             if (expired(message)) { readerMessages.remove(message.key()); }
             else { readerMessages.remove(message.key()); readerMessages.put(message.key(), message); readerActive.add(message.key()); }
         }
-        readerNext = page.next(); trimReaderCache(); lastError = null;
+        readerNext = page.next(); acceptedHistoryRequest = requestId; trimReaderCache(); lastError = null;
     }
     private void invalidateHistory(long chatId) {
         pending.values().removeIf(p -> p.history() != null && p.history().chatId() == chatId);
@@ -342,7 +353,8 @@ public final class BridgeCoordinator implements AutoCloseable {
     private void applyUpdate(MessageUpdate event) {
         if (auth == null || auth.step() != Step.READY || account == null) { return; }
         ReaderMessage m = event.message(); boolean known = readerMessages.containsKey(m.key());
-        if (event.update() == Update.EDIT && !known) { return; }
+        if (event.update() == Update.EDIT && !known) { invalidateHistory(m.chatId()); return; }
+        if (event.update() == Update.NEW && known) { return; } // A duplicate arrival is not an edit or an additional incoming message.
         Chat chat = chats.get(m.chatId());
         if (!known && m.chatId() != selectedChat && (chat == null || chat.chatKind() != ChatKind.USER)) { return; }
         invalidateHistory(m.chatId());
@@ -370,7 +382,7 @@ public final class BridgeCoordinator implements AutoCloseable {
         String term = searchQuery.toLowerCase(Locale.ROOT);
         var found = chats.values().stream().filter(c -> c.title().toLowerCase(Locale.ROOT).contains(term)).toList();
         return new ReaderView(account, selectedChat, selection, window, latestWindow, visible, readerNext, directoryNext,
-                found, searchQuery, pending.values().stream().anyMatch(p -> p.history() != null), incomingIndicator, readerMessages.size());
+                requestedHistoryRequest, acceptedHistoryRequest, found, searchQuery, pending.values().stream().anyMatch(p -> p.history() != null), incomingIndicator, readerMessages.size());
     }
     private BridgeException fail(BridgeException.Code code) { failure = code; close(); return new BridgeException(code); }
     @Override public synchronized void close() {

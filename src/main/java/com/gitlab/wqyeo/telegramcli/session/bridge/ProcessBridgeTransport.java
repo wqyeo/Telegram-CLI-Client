@@ -28,6 +28,7 @@ public final class ProcessBridgeTransport implements AutoCloseable {
     private final Object monitor = new Object();
     private final Process process;
     private final UUID generation;
+    private final int typedVersion;
     private final Sink sink;
     private final Budgets budgets;
     private final ArrayDeque<Write> queue = new ArrayDeque<>();
@@ -37,7 +38,8 @@ public final class ProcessBridgeTransport implements AutoCloseable {
     private boolean ready, closing, ack, eof, readerDone, writerDone, stopped, clean;
     private long incoming, closeRequest, closeStarted;
 
-    private ProcessBridgeTransport(Process process, UUID generation, Sink sink, Budgets budgets) {
+    private ProcessBridgeTransport(Process process, UUID generation, Sink sink, Budgets budgets, int typedVersion) {
+        this.typedVersion = typedVersion;
         this.process = Objects.requireNonNull(process); this.generation = Objects.requireNonNull(generation);
         this.sink = Objects.requireNonNull(sink); this.budgets = Objects.requireNonNull(budgets);
         reader = Thread.ofVirtual().name("typed-pipe-reader").unstarted(this::readLoop);
@@ -46,7 +48,15 @@ public final class ProcessBridgeTransport implements AutoCloseable {
     }
     /** Ownership transfers here; handshake/startup failure also terminates and reaps the child. */
     public static ProcessBridgeTransport attachPublicFixture(Process process, UUID generation, Sink sink, Budgets budgets) throws BridgeException {
-        var result = new ProcessBridgeTransport(process, generation, sink, budgets);
+        return attachPublicFixture(process, generation, sink, budgets, 1);
+    }
+    /** Explicit v2 PUBLIC fixture attachment; no negotiation/downgrade or genuine-worker claim. */
+    public static ProcessBridgeTransport attachPublicReaderFixture(Process process, UUID generation, Sink sink, Budgets budgets) throws BridgeException {
+        return attachPublicFixture(process, generation, sink, budgets, 2);
+    }
+    private static ProcessBridgeTransport attachPublicFixture(Process process, UUID generation, Sink sink, Budgets budgets, int typedVersion) throws BridgeException {
+        if (typedVersion != 1 && typedVersion != 2) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
+        var result = new ProcessBridgeTransport(process, generation, sink, budgets, typedVersion);
         result.reader.start(); result.writer.start(); result.watchdog.start();
         try {
             try (var buffer = new WipingBuffer()) {
@@ -79,7 +89,8 @@ public final class ProcessBridgeTransport implements AutoCloseable {
 
     /** Only bounded application requests/control, never arbitrary SDK/response dispatch. */
     public void send(Frame frame) throws BridgeException {
-        if (frame == null || !generation.equals(frame.generation()) || !(frame.payload() instanceof Request || frame.payload() instanceof Control)
+        if (frame == null || frame.version() != typedVersion || !generation.equals(frame.generation())
+                || !(frame.payload() instanceof Request || frame.payload() instanceof HistoryRequest || frame.payload() instanceof Control)
                 || frame.payload() instanceof Control value && value.action() == Action.CLOSE) { throw new BridgeException(BridgeException.Code.STATE_INVALID); }
         try (var buffer = new WipingBuffer()) { BridgeProtocol.write(buffer, frame); enqueue(buffer.toByteArray(), false); }
     }
@@ -108,7 +119,7 @@ public final class ProcessBridgeTransport implements AutoCloseable {
                 if (!closing) {
                     closing = true; closeStarted = System.nanoTime();
                     Frame frame = command.create();
-                    if (!generation.equals(frame.generation()) || !(frame.payload() instanceof Control control) || control.action() != Action.CLOSE) {
+                    if (frame.version() != typedVersion || !generation.equals(frame.generation()) || !(frame.payload() instanceof Control control) || control.action() != Action.CLOSE) {
                         throw new BridgeException(BridgeException.Code.STATE_INVALID);
                     }
                     closeRequest = frame.requestId();
@@ -146,7 +157,8 @@ public final class ProcessBridgeTransport implements AutoCloseable {
                 } else if (namespace == BridgePipeProtocol.Namespace.TYPED) {
                     Frame frame = BridgeProtocol.read(input);
                     synchronized (monitor) {
-                        if (ack || frame == null || frame.payload() instanceof Request || frame.payload() instanceof Control) { throw invalid(); }
+                        if (ack || frame == null || frame.version() != typedVersion || frame.payload() instanceof Request
+                                || frame.payload() instanceof HistoryRequest || frame.payload() instanceof Control) { throw invalid(); }
                         if (!generation.equals(frame.generation())) {
                             if (++stale > BridgeCoordinator.QUEUE_CAPACITY) { throw new BridgeException(BridgeException.Code.OVERFLOW); }
                             continue;

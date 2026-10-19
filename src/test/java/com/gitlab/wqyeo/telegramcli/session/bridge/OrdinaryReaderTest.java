@@ -94,8 +94,38 @@ class OrdinaryReaderTest {
         var expired = new ReaderMessage(101, 8, "PUBLIC", "PUBLIC expired", 8, 999, false, false, Content.TEXT);
         page(core.historyPage(true), Continuation.end(), expired); assertEquals(0, core.latest().reader().retainedMessages());
     }
+    @Test void editOfAnUncachedMessageStillInvalidatesThePendingPage() throws Exception {
+        ready(); Frame stale = core.selectChat(101);
+        post(new MessageUpdate(Update.EDIT, message(101, 7, "PUBLIC edited before load")));
+        page(stale, Continuation.end(), message(101, 7, "PUBLIC stale before edit"));
+        assertTrue(core.latest().reader().messages().isEmpty()); assertEquals(0, core.latest().reader().acceptedHistoryRequest());
+        assertEquals(stale.requestId(), core.latest().reader().requestedHistoryRequest());
+    }
+    @Test void localExpiryWinsOverAnAlreadyQueuedPageWithOldText() throws Exception {
+        var seconds = new AtomicLong(1000);
+        Clock clock = new Clock() {
+            @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() { return Instant.ofEpochSecond(seconds.get()); }
+        };
+        try (var other = BridgeCoordinator.publicReader(generation, clock, nanos::get)) {
+            other.offer(new Frame(2, generation, 1, 0, new Auth(Step.READY, UUID.randomUUID(), 0, Unsupported.NONE)));
+            other.offer(new Frame(2, generation, 2, 0, new Account(1, "PUBLIC")));
+            other.offer(new Frame(2, generation, 3, 0, new Connection(Phase.READY))); other.drain();
+            Frame directory = other.directoryPage(true);
+            other.offer(new Frame(2, generation, 4, directory.requestId(), new Directory(List.of(new Chat(101, "PUBLIC", ChatKind.USER)), Continuation.end()))); other.drain();
+            Frame initial = other.selectChat(101); var q = (HistoryRequest) initial.payload();
+            var expiring = new ReaderMessage(101, 7, "PUBLIC", "PUBLIC expiry", 7, 1002, false, false, Content.TEXT);
+            other.offer(new Frame(2, generation, 5, initial.requestId(), new HistoryPage(101, q.selection(), q.window(), List.of(expiring), Continuation.end()))); other.drain();
+            Frame stale = other.historyPage(true); q = (HistoryRequest) stale.payload();
+            other.offer(new Frame(2, generation, 6, stale.requestId(), new HistoryPage(101, q.selection(), q.window(), List.of(message(101, 7, "PUBLIC resurrected")), Continuation.end())));
+            seconds.set(1003); other.drain();
+            assertEquals(0, other.latest().reader().retainedMessages()); assertTrue(other.latest().reader().messages().isEmpty());
+            assertNotEquals(stale.requestId(), other.latest().reader().acceptedHistoryRequest());
+        }
+    }
     @Test void pendingCancellationDeadlineUnknownAndConnectionLossDoNotReportHistoryEnd() throws Exception {
-        ready(); Frame q = core.selectChat(101); core.control(Action.CANCEL, q.requestId());
+        ready(); Frame q = core.selectChat(101); core.cancelRead(q.requestId());
         page(q, Continuation.end(), message(101, 1, "PUBLIC late")); assertEquals(ContinuationState.UNKNOWN, core.latest().reader().next().state());
         Frame timeout = core.historyPage(true); nanos.set(Duration.ofSeconds(11).toNanos()); core.drain();
         page(timeout, Continuation.end(), message(101, 1, "PUBLIC late")); assertEquals(ContinuationState.UNKNOWN, core.latest().reader().next().state());
@@ -107,6 +137,7 @@ class OrdinaryReaderTest {
         assertEquals(102, core.latest().reader().searchResults().getFirst().id());
         page(core.selectChat(101), Continuation.end(), message(101, 1, "PUBLIC"));
         for (long id = 2; id < 140; id++) { post(new MessageUpdate(Update.NEW, message(101, id, "PUBLIC"))); }
+        for (long id = 1; id < 50; id++) { post(new MessageUpdate(Update.NEW, message(102, id, "PUBLIC other chat"))); }
         assertEquals(MAX_MESSAGES, core.latest().reader().retainedMessages()); assertEquals(MESSAGE_PAGE, core.latest().reader().messages().size());
         post(new Connection(Phase.AUTH_EXPIRED));
         assertTrue(core.latest().chats().isEmpty()); assertTrue(core.latest().reader().messages().isEmpty());
@@ -121,6 +152,8 @@ class OrdinaryReaderTest {
         assertEquals(new Frame(2, generation, 1, 0, new MessageUpdate(Update.NEW, m)), copy(new Frame(2, generation, 1, 0, new MessageUpdate(Update.NEW, m))));
         assertFalse(JsonMapper.builder().build().writeValueAsString(m).contains("🙂"));
         assertThrows(IllegalArgumentException.class, () -> ReaderMessage.project(101, 1, "", "\ud800", 0, 0, false, Content.TEXT));
+        assertTrue(Chat.project(101, "🙂".repeat(1000), ChatKind.USER).title().endsWith("…"));
+        assertTrue(Account.project(1, "x".repeat(1000)).displayName().endsWith("…"));
         assertEquals("[Unsupported content]", ReaderMessage.project(101, 1, "", "ignored", 0, 0, false, Content.UNSUPPORTED).text());
     }
 }
