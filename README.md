@@ -15,6 +15,11 @@ The [G1 native-hardening source checkpoint](docs/native-g1-checkpoint.md) preser
 experimental patches, PUBLIC fixtures and Java lease work. Its guarded factory remains
 fenced; selected contracts and component checks are **not** engine-wide acceptance.
 
+The next product milestone is an ordinary-conversation read-only session through authenticated
+reopen. The [activation-blocker register](docs/read-only-activation-register.md) and
+[shared-reader contract proposal](docs/shared-reader-contract-proposal.md) define the remaining
+work; they do not enable a real account client or approve native/account execution.
+
 ## Build and try
 
 Use a full JDK 25. The Maven Wrapper downloads pinned Maven 3.9.16 and verifies
