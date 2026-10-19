@@ -58,9 +58,45 @@ Subject to approval and successful preflight:
 
 A private, non-executed candidate argument vector now preserves the recorded dispatcher
 vector with exactly three substitutions: target source, dependency output and preprocessed
-output. No compiler flag was added or removed. This is an argument derivation, not an
-accepted FileManager recipe or mounted-input preflight. No runnable container invocation is
-supplied: FileManager's feature/header binding and execution approval remain unestablished.
+output. No compiler flag was added or removed. This remains a derived FileManager command,
+not recovery of the missing original translation-unit recipe.
+
+## Prepared host-input preflight — compiler NOT invoked
+
+The bounded continuation now has a fresh private input stage and a recorded, **unexecuted**
+container argument vector. Host-side checks established:
+
+- All 2,214 protected dispatcher-lineage hashes and the earlier 996 protected baseline hashes
+  match. These sets overlap; they are not 3,210 distinct files.
+- The FileManager target is archive-exact, SHA256
+  `6dd9ac91db7d3bd9ceb711e686f7f27a59b839a1e4d8a531b9970d0733e6dc17`.
+- Forty-one frozen files bind the accepted source overlay, retained toolchain headers,
+  prior compiler record and the added target. No prior output parent was rerun or overwritten.
+- All recorded include roots exist and resolve within their intended input trees. The cached
+  TDLib tree's 928 header candidates are hash-bound; recorded symlink aliases stay within the
+  read-only cache. This is a candidate set, **not the compiler's consumed dependency closure**.
+- Metadata-only inspection found the cached image at the pinned immutable identity, Linux/
+  amd64. The compiler was not run even for its version; its prior record is retained and its
+  future execution is bound to that immutable image, not a host compiler fallback.
+
+The proposed container layout mounts the cache at `/work` read-only, frozen inputs at `/g1`
+read-only, and scratch output at `/stage` writable. A nested **read-only** source mount at
+`/stage/source` prevents the compiler from changing the target/overlay through its output
+mount. There is no writable input alias in this proposed layout.
+
+The recorded wrapper uses `/usr/bin/env -i` to pass the preserved argument vector with only
+fixed PATH, HOME and locale values. It overrides an implicit image entrypoint, denies network,
+uses `--pull=never`, a read-only root, dropped capabilities and no-new-privileges. Temporary
+storage/resource bounds apply only to this proposed preprocessing job; they select no engine
+readiness deadline, retry policy or shutdown guarantee.
+
+No `podman run`, compiler, macro dump, object/link step, SDK or TDLib invocation occurred.
+Execution still requires explicit approval and fresh validation of the head, hashes, image,
+mounts and exclusive-output state. The future host controller must retain the container ID,
+confirm actual container termination before final preservation checks, and retain failures
+without retry/fallback. A saved command vector alone is not that controller or a run receipt.
+The actual FileManager feature/macro state, consumed header closure, output mapping and four
+function certificates remain unestablished.
 
 ## Preflight and evidence contract
 
