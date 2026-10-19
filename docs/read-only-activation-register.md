@@ -46,7 +46,7 @@ closed only by its specified implementation/evidence, not by producing another d
 
 | ID / accountable boundary | Current blocker and product consequence | Closure deliverable / evidence |
 |---|---|---|
-| **A1 — Native admission coverage** | Supported persisted schemas, original-state/replay/effect dispositions and broader initializer families are not closed. Five role contracts are selected but unimplemented; 120 other integer contracts remain open. Binlog-only/UI deferral does not exclude native parsers or service effects. Unsafe to open an account store. | A finite supported-state/family/phase register; necessary D1/D2/D4 decisions; complete guards or enforced compatible exclusions for every reachable row. Preserve identity/exact24/main-DC/raw32/no-repair rules. Reuse inventories; no one-option-at-a-time leaf campaign. |
+| **A1 — Native admission coverage** | Supported persisted schemas, original-state/replay/effect dispositions and broader initializer families are not closed. The [five-role candidate](native-g1-fixed-roles.md) now has joined source guards and bounded compilation/PUBLIC component evidence, not actual-phase acceptance; 120 other integer contracts remain open. Binlog-only/UI deferral does not exclude native parsers or service effects. Unsafe to open an account store. | A finite supported-state/family/phase register; necessary D1/D2/D4 decisions; complete guards or enforced compatible exclusions for every reachable row. Preserve identity/exact24/main-DC/raw32/no-repair rules. Reuse inventories; no one-option-at-a-time leaf campaign. |
 | **A2 — Native readiness/completion integration** | Real required-owner completion, value/attempt binding, observed snapshots/wakes and outward publication remain unwired. Callback/Unit/disposal/restart markers are not service success. | Select D3 from a concrete required-work roster without introducing repair/reload cycles; implement combined validators, both seals, semantic-refusal precedence, same-actor final validation and one-flight/wake handling. Joined PUBLIC checks, then E2 evidence; no mechanical descriptor bump. |
 | **A3 — Runtime authority loss** | Storage/auth loss must revoke operations and private views; durable revoked-state/restore behavior is unfinished. A disconnected network is not the same as revoked authority. | Native/application revocation path, pending-work disposition, private-view purge and refused unsafe reopen. Show loss at relevant lifecycle phases without reset/repair/automatic reauthorization. This is logical data disposal, not a claim of perfect erasure. |
 | **A4 — Stop, sole lease and reopen** | FileLoad/retry/GC/transfer descendants, shared native implementation ownership and actual worker stop are not composed. Current PUBLIC close success is insufficient. | A closed reachable resource roster and genuine generation/profile-bound positive stop observation; compose with ack, EOF, zero exit and readers before permitted lease release. Uncertain Close retains honest ownership; kill/timeout/removed handle is not clean flush or stop confirmation. E2 must exercise actual resources and same-store reopen. |
@@ -58,6 +58,13 @@ closed only by its specified implementation/evidence, not by producing another d
 | **A10 — Genuine read-only journey** | No real authentication, ordinary history/update or authenticated reopen has been demonstrated. | After A1–A9 and explicit F approval, operator-local acceptance of every journey step above. Record redacted outcomes only. Failure does not authorize reset, fresh login fallback or sends. |
 
 ## Critical path, not an implied activation estimate
+
+The operator permitted the fenced five-role source increment before the remaining A1/A2
+prerequisites. Its descriptor9 candidate includes original/import/default/runtime/consumer
+and both-seal placements, with selected semantic refusal before healthy Changed. Eleven
+native objects plus private Java compiled; PUBLIC14 context and 55 value families passed.
+This sequencing change does not select D3 or actual-stop ownership, close broader admission,
+or authorize E1/E2/F. The factory remains fenced.
 
 A1, A2 and A4 are the dominant native critical path. **A proved minimal safe native activation
 slice has not yet been established.** The open integer/schema/effect families must be grouped

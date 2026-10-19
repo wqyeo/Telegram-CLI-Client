@@ -289,5 +289,117 @@ int main() {
     correct &= buffer == original && value_buffer == "xxI1yy";
   }
   check(correct, "retired-option-borrowed-subviews-and-no-mutation");
+  // Independent selected-policy goldens, not the implementation's role table.
+  const std::array<std::array<std::string_view, 3>, 5> fixed_roles{{
+      {{"telegram_service_notifications_chat_id", "I777000", "I777000"}},
+      {{"replies_bot_chat_id", "I1271266957", "I708513"}},
+      {{"verification_codes_bot_chat_id", "I489000", "I489000"}},
+      {{"group_anonymous_bot_user_id", "I1087968824", "I552888"}},
+      {{"channel_bot_user_id", "I136817688", "I936174"}}}};
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    g1::FixedRoleGroup group(test_dc);
+    for (const auto &role : fixed_roles) {
+      const auto value = role[test_dc ? 2 : 1];
+      correct &= g1::fixed_role_option_valid(role[0], value, test_dc);
+      group.observe(role[0], value);
+    }
+    correct &= group.valid();
+  }
+  check(correct, "fixed-roles-complete-both-trusted-modes");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    for (unsigned mask = 0; mask < 32; ++mask) {
+      g1::FixedRoleGroup group(test_dc);
+      for (std::size_t i = 0; i < fixed_roles.size(); ++i) {
+        if (mask & (1U << i)) { group.observe(fixed_roles[i][0], fixed_roles[i][test_dc ? 2 : 1]); }
+      }
+      correct &= group.valid() == (mask == 31);
+    }
+  }
+  check(correct, "fixed-roles-all64-presence-masks");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    g1::FixedRoleGroup initial(test_dc);
+    correct &= initial.valid(false) && !initial.valid();
+    initial.observe(fixed_roles[0][0], fixed_roles[0][1]);
+    correct &= initial.valid(false) && !initial.valid();
+    initial.observe(fixed_roles[1][0], "");
+    correct &= !initial.valid(false) && !initial.valid();
+  }
+  check(correct, "fixed-roles-pristine-initial-absence-not-invalid-present");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    for (const auto &role : fixed_roles) {
+      for (auto bad : {"", "S", "Btrue", "I0", "I-1", "I1", "I+777000", "I0777000",
+                       "I777000x", "I9223372036854775808", "I1099511627776"}) {
+        correct &= !g1::fixed_role_option_valid(role[0], bad, test_dc);
+      }
+    }
+  }
+  check(correct, "fixed-roles-erase-tags-noncanonical-and-wrong-values");
+  correct = true;
+  for (const auto &role : fixed_roles) {
+    if (role[1] != role[2]) {
+      correct &= !g1::fixed_role_option_valid(role[0], role[2], false);
+      correct &= !g1::fixed_role_option_valid(role[0], role[1], true);
+    }
+  }
+  check(correct, "fixed-roles-mode-mismatch");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    for (std::size_t i = 0; i < fixed_roles.size(); ++i) {
+      for (std::size_t j = 0; j < fixed_roles.size(); ++j) {
+        if (i != j) { correct &= !g1::fixed_role_option_valid(fixed_roles[i][0], fixed_roles[j][test_dc ? 2 : 1], test_dc); }
+      }
+    }
+  }
+  check(correct, "fixed-roles-no-other-role-or-self-id-substitution");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    for (const auto &role : fixed_roles) {
+      auto value = role[test_dc ? 2 : 1];
+      for (std::size_t size = 0; size < value.size(); ++size) {
+        correct &= !g1::fixed_role_option_valid(role[0], value.substr(0, size), test_dc);
+      }
+      std::string binary(value); binary.push_back('\0');
+      correct &= !g1::fixed_role_option_valid(role[0], binary, test_dc);
+      correct &= !g1::fixed_role_option_valid(role[0], std::string(value) + "x", test_dc);
+    }
+  }
+  check(correct, "fixed-roles-truncation-extra-and-binary-refused");
+  correct = g1::fixed_role_option_valid("anti_spam_bot_user_id", "I1", false) &&
+            g1::fixed_role_option_valid("my_id", "I1", true);
+  for (const auto &role : fixed_roles) {
+    correct &= g1::fixed_role_option_valid("x" + std::string(role[0]), "I0", false);
+    correct &= g1::fixed_role_option_valid(std::string(role[0]) + "x", "I0", true);
+  }
+  check(correct, "fixed-roles-exact-names-no-other-option-policy");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    g1::FixedRoleGroup group(test_dc);
+    for (const auto &role : fixed_roles) {
+      const std::string name = "xx" + std::string(role[0]) + "yy";
+      const std::string value = "xx" + std::string(role[test_dc ? 2 : 1]) + "yy";
+      auto name_view = std::string_view(name).substr(2, name.size() - 4);
+      auto value_view = std::string_view(value).substr(2, value.size() - 4);
+      group.observe(name_view, value_view);
+      correct &= g1::fixed_role_option_valid(name_view, value_view, test_dc);
+      correct &= name == "xx" + std::string(role[0]) + "yy";
+      correct &= value == "xx" + std::string(role[test_dc ? 2 : 1]) + "yy";
+    } // Temporary buffers gone: the accumulator must retain no borrowed bytes.
+    correct &= group.valid();
+  }
+  check(correct, "fixed-roles-borrowed-subviews-no-escape-or-mutation");
+  correct = true;
+  for (bool test_dc : {false, true}) {
+    for (const auto &bad_role : fixed_roles) {
+      g1::FixedRoleGroup group(test_dc);
+      group.observe(bad_role[0], "I0");
+      for (const auto &role : fixed_roles) { group.observe(role[0], role[test_dc ? 2 : 1]); }
+      correct &= !group.valid() && !group.valid(false);
+    }
+  }
+  check(correct, "fixed-roles-invalid-observation-not-repaired");
   std::cout << "PUBLIC_NATIVE_VALUES_ACCEPTED account_engine=0\n";
 }

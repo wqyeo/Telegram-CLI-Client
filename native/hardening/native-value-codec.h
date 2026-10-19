@@ -221,6 +221,49 @@ inline bool config_option_codec_valid(std::string_view data) {
   return data.front() == 'S' && value_utf8_valid(data.substr(1));
 }
 
+// Five selected fixed roles only. The bool is supplied by an already-validated
+// native storage binding, never inferred from an option or the authenticated ID.
+// Exact encoded comparison also rejects wrong tags, padding, signs and overflow.
+struct FixedRoleOption {
+  std::string_view name, production, test;
+};
+inline constexpr std::array<FixedRoleOption, 5> FixedRoleOptions{{
+    {"telegram_service_notifications_chat_id", "I777000", "I777000"},
+    {"replies_bot_chat_id", "I1271266957", "I708513"},
+    {"verification_codes_bot_chat_id", "I489000", "I489000"},
+    {"group_anonymous_bot_user_id", "I1087968824", "I552888"},
+    {"channel_bot_user_id", "I136817688", "I936174"}}};
+
+inline bool fixed_role_option_valid(std::string_view name, std::string_view value, bool test_dc) {
+  for (const auto &role : FixedRoleOptions) {
+    if (name == role.name) { return value == (test_dc ? role.test : role.production); }
+  }
+  return true; // Unrelated names gain NO semantic/absence policy from this helper.
+}
+
+// Owns only a five-bit presence mask and validity flag, never borrowed bytes.
+// require_presence=false is ONLY for the explicit pristine NEW initial import;
+// EXISTING and both seal passes always require the complete group.
+class FixedRoleGroup final {
+ public:
+  explicit FixedRoleGroup(bool test_dc) : test_dc_(test_dc) {}
+  void observe(std::string_view name, std::string_view value) {
+    for (std::size_t i = 0; i < FixedRoleOptions.size(); ++i) {
+      const auto &role = FixedRoleOptions[i];
+      if (name == role.name) {
+        present_ |= 1U << i;
+        valid_ &= value == (test_dc_ ? role.test : role.production);
+        return;
+      }
+    }
+  }
+  bool valid(bool require_presence = true) const { return valid_ && (!require_presence || present_ == 31U); }
+ private:
+  bool test_dc_;
+  unsigned present_ = 0;
+  bool valid_ = true;
+};
+
 // The same entry predicate is used by raw quarantine and borrowed seal views.
 // Preserves existing name framing and value grammar; adds ONLY selected absence.
 // Other per-option types/ranges, defaults and legacy/cache rules remain OPEN.

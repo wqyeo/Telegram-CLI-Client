@@ -297,7 +297,31 @@
      return finish_set_parameters();
    }
    auto events = r_opened_database.move_as_ok();
-@@ -1362,6 +1439,40 @@
+@@ -861,6 +938,13 @@
+   G()->init(actor_id(this), std::move(events.database)).ensure();
+ 
+   init_options_and_network();
++  if (td_options_.g1_context && !td_options_.g1_context->validate()) {
++    send_closure(actor_id(this), &Td::send_error, set_parameters_request_id_,
++                 Status::Error(400, "TGCLI_G1_NATIVE_ADMISSION_REFUSED"));
++    pending_set_parameters_requests_.clear();
++    finish_set_parameters();
++    return stop_g1();
++  }
+ 
+   // we need to process td_api::getOption along with td_api::setOption for consistency
+   // we need to process td_api::setOption before managers and MTProto header are created,
+@@ -1048,6 +1132,9 @@
+   VLOG(td_init) << "Create OptionManager";
+   option_manager_ = make_unique<OptionManager>(this);
+   G()->set_option_manager(option_manager_.get());
++  // The object is assigned for normal disposal. The caller propagates refusal
++  // before pending requests or later managers; no close re-entry in construction.
++  if (td_options_.g1_context && !td_options_.g1_context->validate()) { return; }
+ 
+   VLOG(td_init) << "Create ConnectionCreator";
+   G()->set_connection_creator(create_actor<ConnectionCreator>("ConnectionCreator", create_reference()));
+@@ -1362,6 +1449,40 @@
  void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
    CHECK(object != nullptr);
    auto object_id = object->get_id();
@@ -338,7 +362,7 @@
    if (close_flag_ >= 5 && object_id != td_api::updateAuthorizationState::ID) {
      // just in case
      return;
-@@ -1410,6 +1521,16 @@
+@@ -1410,6 +1531,16 @@
  
    auto it = request_set_.find(id);
    if (it != request_set_.end()) {
@@ -355,7 +379,7 @@
      if (object == nullptr) {
        object = td_api::make_object<td_api::error>(404, "Not Found");
      }
-@@ -1440,7 +1561,12 @@
+@@ -1440,7 +1571,12 @@
  
  Result<std::pair<Td::Parameters, TdDb::Parameters>> Td::get_parameters(
      td_api::object_ptr<td_api::setTdlibParameters> parameters) {
@@ -369,7 +393,7 @@
    if (!clean_input_string(parameters->api_hash_) || !clean_input_string(parameters->system_language_code_) ||
        !clean_input_string(parameters->device_model_) || !clean_input_string(parameters->system_version_) ||
        !clean_input_string(parameters->application_version_)) {
-@@ -1460,6 +1586,7 @@
+@@ -1460,6 +1596,7 @@
    result.first.api_hash_ = std::move(parameters->api_hash_);
    result.first.use_secret_chats_ = parameters->use_secret_chats_;
  
@@ -412,6 +436,24 @@
    Slice get_database_directory() const {
      return parameters_.database_directory_;
    }
+@@ -126,6 +138,9 @@
+   BinlogInterface *get_binlog_impl(const char *file, int line);
+ 
+   std::shared_ptr<KeyValueSyncInterface> get_binlog_pmc_shared();
++  // Selected fixed-role guards, not required-owner completion or Ready APIs.
++  Status check_g1_options_before_import();
++  Status check_g1_fixed_role_option(Slice name, Slice value);
+   std::shared_ptr<KeyValueSyncInterface> get_config_pmc_shared();
+ 
+ #define get_binlog_pmc() get_binlog_pmc_impl(__FILE__, __LINE__)
+@@ -161,6 +176,7 @@
+ 
+  private:
+   Parameters parameters_;
++  bool g1_option_import_started_ = false;
+ 
+   bool was_dialog_db_created_ = false;
+ 
 --- a/td/telegram/TdDb.cpp
 +++ b/td/telegram/TdDb.cpp
 @@ -1,12 +1,12 @@
@@ -432,7 +474,7 @@
  #include "td/telegram/DialogDb.h"
  #include "td/telegram/files/FileDb.h"
  #include "td/telegram/Global.h"
-@@ -14,759 +14,293 @@
+@@ -14,759 +14,321 @@
  #include "td/telegram/MessageDb.h"
  #include "td/telegram/MessageThreadDb.h"
  #include "td/telegram/StoryDb.h"
@@ -541,15 +583,17 @@
 +}
 +
 +template<class Store>
-+bool config_codecs_valid(Store &config) {
++bool config_codecs_valid(Store &config, bool test_dc, bool require_roles = true) {
 +  bool valid = true;
++  g1::FixedRoleGroup roles(test_dc);
 +  config.for_each([&](Slice name, Slice value) {
-+    auto key = borrowed(name);
-+    valid &= g1::config_option_entry_codec_valid(key, borrowed(value));
++    auto key = borrowed(name), bytes = borrowed(value);
++    valid &= g1::config_option_entry_codec_valid(key, bytes);
++    roles.observe(key, bytes);
 +  });
-+  // Entry framing + selected24-name absence only. Other per-option domains,
++  // Selected exact24 absence + five fixed roles only. Other option domains,
 +  // default/cleanup rules and cross-fields remain an integration blocker.
-+  return valid;
++  return valid && roles.valid(require_roles);
 +}
 +
 +Status init_binlog(Binlog &binlog, const std::string &path, BinlogKeyValue<Binlog> &pmc,
@@ -1071,7 +1115,7 @@
 +  }
 +  if (pmc->isset("sqlite_key") || pmc->isset("auth_is_bot") ||
 +      (context->is_new() && new_nonempty) ||
-+      (!context->is_new() && (!personal_authorized(*pmc) || !config_codecs_valid(*config) ||
++      (!context->is_new() && (!personal_authorized(*pmc) || !config_codecs_valid(*config, parameters.is_test_dc_) ||
 +                              !identity_pair_valid(*pmc, *config)))) {
 +    return promise.set_error(refused());
 +  }
@@ -1303,9 +1347,19 @@
 -    parameters.files_directory_ = r_files_directory.move_as_ok();
 -  }
 -
--  return Status::OK();
--}
--
++Status TdDb::check_g1_options_before_import() {
++  auto context = parameters_.g1_context_;
++  const bool repeated = g1_option_import_started_;
++  g1_option_import_started_ = true; // Constructor admission is one-use, even on failure.
++  if (!context || repeated || !context->validate() || !config_pmc_ ||
++      context->state() != g1::StorageContext::State::AwaitingAuthorization ||
++      !config_codecs_valid(*config_pmc_, parameters_.is_test_dc_, !context->is_new())) {
++    if (context) { context->stop(); }
++    return refused();
++  }
+   return Status::OK();
+ }
+ 
 -DbKey TdDb::as_db_key(string key) {
 -  if (key.empty()) {
 -    return DbKey::raw_key("cucumber");
@@ -1320,9 +1374,16 @@
 -Status TdDb::destroy(const Parameters &parameters) {
 -  SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
 -  Binlog::destroy(get_binlog_path(parameters)).ignore();
--  return Status::OK();
--}
--
++Status TdDb::check_g1_fixed_role_option(Slice name, Slice value) {
++  auto context = parameters_.g1_context_;
++  if (!context || !context->validate() ||
++      !g1::fixed_role_option_valid(borrowed(name), borrowed(value), parameters_.is_test_dc_)) {
++    if (context) { context->stop(); }
++    return refused();
++  }
+   return Status::OK();
+ }
+ 
 -void TdDb::with_db_path(const std::function<void(CSlice)> &callback) {
 -  SqliteDb::with_db_path(get_sqlite_path(parameters_), callback);
 -  CHECK(binlog_ != nullptr);
@@ -1422,7 +1483,7 @@
 +  }
 +  auto views = captured.move_as_ok();
 +  if (!views) { return promise.set_value(AuthorizationSealResult::Busy); }
-+  if (!personal_authorized(views.first) || !config_codecs_valid(views.second) ||
++  if (!personal_authorized(views.first) || !config_codecs_valid(views.second, parameters_.is_test_dc_) ||
 +      !identity_pair_valid(views.first, views.second)) {
 +    views = Store::SnapshotPair(); // No outward callbacks while any guard is held.
 +    context->stop(); return promise.set_error(refused());
@@ -1432,7 +1493,7 @@
 +  views = Store::SnapshotPair(); // Release BOTH guards before native actor sync.
 +  binlog_->force_sync_handoff(PromiseCreator::lambda(
 +      [context = std::move(context), generation, pmc = binlog_pmc_, config = config_pmc_, writer = binlog_,
-+       pmc_stamp, config_stamp, promise = std::move(promise)](Result<Unit> synced) mutable {
++       test_dc = parameters_.is_test_dc_, pmc_stamp, config_stamp, promise = std::move(promise)](Result<Unit> synced) mutable {
 +        // This success continuation is invoked by an explicitly deferred turn on
 +        // the actual binlog actor, not inline or on the separately running Td actor.
 +        if (synced.is_error()) { synced.move_as_error().ignore(); context->stop(); return promise.set_error(refused()); }
@@ -1441,11 +1502,14 @@
 +              context->state() != g1::StorageContext::State::AwaitingAuthorization) { return refused(); }
 +          TRY_RESULT(final_views, Store::try_snapshot_pair(pmc, config));
 +          if (!final_views) { return AuthorizationSealResult::Busy; }
++          // Current semantic invalidity is refusal even when the captured stamps
++          // changed. Healthy Changed must never hide missing/wrong roles or the
++          // already-selected auth, identity and retired-name refusal contracts.
++          if (!personal_authorized(final_views.first) || !config_codecs_valid(final_views.second, test_dc) ||
++              !identity_pair_valid(final_views.first, final_views.second)) { return refused(); }
 +          if (!final_views.first.matches(pmc_stamp) || !final_views.second.matches(config_stamp)) {
 +            return AuthorizationSealResult::Changed;
 +          }
-+          if (!personal_authorized(final_views.first) || !config_codecs_valid(final_views.second) ||
-+              !identity_pair_valid(final_views.first, final_views.second)) { return refused(); }
 +          // Fixed native-only continuation: no G(), actor wait or external callback.
 +          // Writer maintenance is excluded by this actor's serialization. Native
 +          // Ready is the guarded internal authority point, NOT full schema acceptance.
@@ -2311,3 +2375,115 @@
    void force_flush() final;
    void change_key(DbKey db_key, Promise<> promise) final;
  
+--- a/td/telegram/OptionManager.cpp
++++ b/td/telegram/OptionManager.cpp
+@@ -56,6 +56,15 @@
+     , current_scheduler_id_(Scheduler::instance()->sched_id())
+     , options_(td::make_unique<TsSeqKeyValue>())
+     , option_pmc_(G()->td_db()->get_config_pmc_shared()) {
++  // Before the first import, decoder, default or outward option update. Only
++  // explicit pristine NEW can initially lack the five fixed-role entries.
++  auto admitted = G()->td_db()->check_g1_options_before_import();
++  if (admitted.is_error()) {
++    admitted.ignore();
++    g1_refused_.store(true);
++    send_closure_later(G()->td(), &Td::stop_g1);
++    return;
++  }
+   send_unix_time_update();
+ 
+   auto &options = options_->inner();
+@@ -84,6 +93,7 @@
+ 
+   bool is_test_dc = G()->is_test_dc();
+   auto set_default_integer_option = [&](string name, int64 value) {
++    if (g1_refused_.load()) { return; }
+     if (options.isset(name)) {
+       if (false && options.get(name) != (PSTRING() << 'I' << value)) {
+         LOG(ERROR) << "Option " << name << " has default value " << value << " instead of "
+@@ -92,6 +102,8 @@
+       return;
+     }
+     auto str_value = PSTRING() << 'I' << value;
++    // This producer bypasses set_option: validate before either map/binlog write.
++    if (!accept_g1_option(name, str_value)) { return; }
+     options.set(name, str_value);
+     option_pmc_->set(name, str_value);
+ 
+@@ -108,6 +120,7 @@
+                              DialogId(UserManager::get_verification_codes_bot_user_id()).get());
+   set_default_integer_option("group_anonymous_bot_user_id", UserManager::get_anonymous_bot_user_id().get());
+   set_default_integer_option("channel_bot_user_id", UserManager::get_channel_bot_user_id().get());
++  if (g1_refused_.load()) { return; } // No further constructor effects after refusal.
+   set_default_integer_option("anti_spam_bot_user_id", UserManager::get_anti_spam_bot_user_id().get());
+   set_default_integer_option("message_caption_length_max", 1024);
+   set_default_integer_option("message_reply_quote_length_max", 1024);
+@@ -389,9 +402,21 @@
+   return value.substr(1);
+ }
+ 
++bool OptionManager::accept_g1_option(Slice name, Slice value) const {
++  if (g1_refused_.load()) { return false; }
++  auto accepted = G()->td_db()->check_g1_fixed_role_option(name, value);
++  if (accepted.is_ok()) { return true; }
++  accepted.ignore();
++  // Context authority is synchronously revoked by TdDb. Defer actor shutdown:
++  // a constructor/getter must not destroy/re-enter the partially built owner.
++  if (!g1_refused_.exchange(true)) { send_closure_later(G()->td(), &Td::stop_g1); }
++  return false;
++}
++
+ void OptionManager::set_option(Slice name, Slice value) {
+   CHECK(!name.empty());
+   CHECK(Scheduler::instance()->sched_id() == current_scheduler_id_);
++  if (!accept_g1_option(name, value)) { return; }
+   if (value.empty()) {
+     if (options_->erase(name.str()) == 0) {
+       return;
+@@ -769,8 +794,13 @@
+   bool is_bot = td_->auth_manager_ != nullptr && td_->auth_manager_->is_authorized() && td_->auth_manager_->is_bot();
+   auto wrap_promise = [this, &promise, &name] {
+     return PromiseCreator::lambda([this, promise = std::move(promise), name](Unit result) mutable {
+-      // the option is already updated on success, ignore errors
+-      promise.set_value(get_option_value_object(get_option(name)));
++      // Preserve the native refresh behavior, but never decode/publish a
++      // refused fixed-role value or turn it into an empty/default success.
++      auto value = get_option(name);
++      if (!accept_g1_option(name, value)) {
++        return promise.set_error(Status::Error(400, "TGCLI_G1_OPTION_REFUSED"));
++      }
++      promise.set_value(get_option_value_object(value));
+     });
+   };
+   switch (name[0]) {
+@@ -1148,6 +1178,10 @@
+ }
+ 
+ void OptionManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
++  const auto current_options = options_->get_all();
++  for (const auto &option : current_options) {
++    if (!accept_g1_option(option.first, option.second)) { return; }
++  }
+   get_common_state(updates);
+ 
+   updates.push_back(td_api::make_object<td_api::updateOption>(
+@@ -1155,7 +1189,7 @@
+ 
+   updates.push_back(td_api::make_object<td_api::updateOption>("unix_time", get_unix_time_option_value_object()));
+ 
+-  for (const auto &option : options_->get_all()) {
++  for (const auto &option : current_options) {
+     if (!is_internal_option(option.first)) {
+       updates.push_back(
+           td_api::make_object<td_api::updateOption>(option.first, get_option_value_object(option.second)));
+--- a/td/telegram/OptionManager.h
++++ b/td/telegram/OptionManager.h
+@@ -66,6 +66,8 @@
+   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
+ 
+  private:
++  bool accept_g1_option(Slice name, Slice value) const;
++  mutable std::atomic<bool> g1_refused_{false};
+   void set_option(Slice name, Slice value);
+ 
+   void on_option_updated(Slice name);
