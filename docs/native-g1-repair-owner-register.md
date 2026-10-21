@@ -5,6 +5,27 @@
 [disposal/client findings](native-g1-disposal-and-client-close.md) and
 [Close/repair boundaries](native-g1-close-and-repair.md) alongside this register.
 
+## Conditional compiler-expanded follow-up
+
+The [preprocessing result](native-g1-preprocessing-proposal.md) adds three syntax-complete
+expanded definitions for one derived Linux case: `on_download_error_impl`,
+`on_generate_error_impl` and `on_upload_error_impl` (171 lexical calls, including macros).
+`on_upload_ok` remains excluded. This does not repair the original raw ranges or supply an
+accepted FileManager TU recipe/typecheck, complete descendant graph or actual-stop proof.
+
+In the emitted download/upload error bodies, restart branches precede local inactive and
+Close-status handling. Caller guards and transitive `run_download`/`run_upload` behavior are
+separate: P-D/P-U restart markers are not terminal completion. Each complete body also creates
+a scope-exit flush capture, not a positive flush/stop acknowledgement. Conditional unlink and
+local/remote location changes still need effect/owner disposition. No new D3 subset, retry
+policy or implementation is selected by these observations.
+
+The original source packet and its exclusions below remain historical with their recorded
+coverage. Broader admission and the [passive-reader contract](read-only-activation-contract.md)
+remain open; the three expanded bodies alone do not justify activation.
+
+## Original source packet
+
 Scope: an eligible download/upload reference repair whose selected source is AppConfig,
 its config batch and repair continuations, plus concrete FileLoad/read-retry/GC owners.
 Other FileSource arms and all transfer/generation descendants are not closed here. No
@@ -165,17 +186,19 @@ Closed event, disposed promise or zero active-query count alone releases the sol
 
 ## Next decision boundary
 
-The [FileManager host-input preflight](native-g1-preprocessing-proposal.md) is prepared but
-actual preprocessing still requires explicit execution approval. Four terminal/error gaps
-remain; the additional full-location and scheduler-finish gaps are separately scoped, not
-silently added to that proposed invocation.
+The consumed FileManager preprocessing case supplies the conditional three-definition
+follow-up above, with upload-success still excluded. Stop at that residual syntax gap;
+further compiler/grammar work needs a new explicit scope. The original raw four exclusions
+are not retroactively cured. Full-location and scheduler-finish remain separate gaps.
 
 Before selecting D3, classify which rows are required finite value/application work, native
 repair/transfer continuations, continuing service work or enforced exclusions. Bind required
 work to the correct value/attempt and give disposal/Close their own dispositions. Complete
 the remaining IO/network/transfer/generation descendants and actual-stop observations.
 
-No D1-D4 policy, new API, timeout, descriptor/wire/factory change or readiness publication
-was selected. The five selected roles remain unimplemented; the other 120 integer contracts
-and broader families remain open. The original reserved-gap failure is UNDETERMINED.
+The original repair source packet selected no D1-D4 policy, new API, timeout,
+descriptor/wire/factory change or readiness publication. The later five-role candidate has
+joined source guards and component evidence, not actual-phase acceptance; the passive effect
+policy is separately selected but not implemented. Other 120 integer contracts and broader
+families remain open. The original reserved-gap failure is UNDETERMINED.
 No actual stop, clean flush, lease release, authenticated reopen or engine acceptance follows.

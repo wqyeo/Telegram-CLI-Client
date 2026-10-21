@@ -97,17 +97,20 @@ logical Closed into clean flush/stop evidence. No new sharing model or stop API 
 
 ## Named blockers and next source boundary
 
-The existing FileManager preprocessing proposal is a **prepared, unexecuted** source step.
-Its four terminal/error whole-function gaps obstruct full repair/restart/Close dispositions.
-The full-local-location helper and scheduler-finish gap are separate scopes. They are not
-silently included in that invocation or resolved by unrelated compiler success.
+The [FileManager preprocessing result](native-g1-preprocessing-proposal.md) now supplies
+three syntax-complete expanded error-handler definitions for one derived Linux case.
+`on_upload_ok` remains excluded with the original-line4922 comparison gap. The original
+FileManager TU recipe is still unavailable; no type, supported-engine, readiness or stop
+certificate follows. Raw gaps retain their original status.
 
-Next proposed source action: refresh inputs against the current candidate and request one
-bounded FileManager preprocessing execution under the existing containment/provenance
-rules. Its question is whether the four named bodies can support the required restart/error
-and disposal ownership classification. A successful preprocessing command is not a type,
-whole-function, readiness, stop or engine certificate; inspect the mapped result and keep
-unresolved regions excluded. Failure does not authorize another invocation or fallback.
+The three bodies make restart/cleanup ownership more concrete, but do not close it: restart
+branches precede local inactive/Close-status handling, and scope-exit captures call flush
+helpers. Caller guards, actual transfer completion and physical resource stop remain separate.
+The full-local-location helper and scheduler-finish gap were not included.
+
+This source step is consumed. Stop at the residual gap: no repeat invocation, changed grammar,
+source masking, compiler AST/typecheck or additional translation unit follows automatically.
+A new scoped decision is needed for further compiler work; checkpoint 1 remains open.
 
 D3, the positive-stop observation contract, remaining state rules, other effects, runtime
 revocation/privacy integration and the original reserved-gap disposition remain blockers.
@@ -134,6 +137,8 @@ Public context: [five-role source increment](native-g1-fixed-roles.md),
 [disposal/client Close](native-g1-disposal-and-client-close.md), and
 [prepared preprocessing scope](native-g1-preprocessing-proposal.md).
 
-This checkpoint increment changes policy documentation only: no native code/schema/wire,
-SDK/default artifact, production UI, build/test/preprocessor run or account operation.
-E1 coherent SDK, E2 actual PUBLIC engine and F genuine acceptance remain separate approvals.
+The passive policy is still documentation-only: no implementing native guard/schema/wire,
+SDK/default artifact or production UI changed. A separately approved single preprocessing
+invocation and bounded source consumption produced the partial result above; no object/link,
+test suite, TDLib engine or account operation occurred. E1 coherent SDK, E2 actual PUBLIC
+engine and F genuine acceptance remain separate approvals.

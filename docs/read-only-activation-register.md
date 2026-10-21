@@ -139,8 +139,8 @@ operator selected passive native effects: no unsolicited presence/default-reacti
 changes, and no clearing or replaying incompatible pending intent. Those exclusions are not
 yet implemented; exact marker/state rules, D3 and actual-stop observations remain open.
 
-The contract names a current-input FileManager preprocessing request to address four specific
-repair/restart/Close source gaps; execution still needs its explicit approval. Full-local and
-scheduler gaps are separate. Do not mark checkpoint 1 complete or begin activation because
-a policy document was published. Coherent SDK, actual PUBLIC engine and genuine acceptance
+The approved FileManager preprocessing case now supplies three syntax-complete expanded
+error-handler definitions; upload-success remains excluded. Stop at that residual gap without
+automatic compiler/grammar fallback. Full-local and scheduler gaps are separate. Do not mark
+checkpoint 1 complete or begin activation from this partial source result. Coherent SDK, actual PUBLIC engine and genuine acceptance
 remain separate E1/E2/F gates; sending and release work remain out of scope.

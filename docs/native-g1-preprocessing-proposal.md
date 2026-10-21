@@ -1,4 +1,59 @@
-# Four-function source preprocessing proposal — NOT EXECUTED
+# Four-function source preprocessing — partial source result
+
+## Current execution result
+
+One explicitly approved, corrected FileManager preprocessing case completed against the
+current descriptor9 overlay and pinned TDLib revision. **Three expanded definitions are
+syntax-complete; one remains excluded.** The factory remains fenced and
+`integrated_engine_accepted=false`. This is not an accepted original FileManager TU recipe,
+a typecheck, SDK build or native-engine/stop certificate.
+
+The first controller attempt stopped before container/compiler launch: it incorrectly
+compared assembled Binlog source with the unassembled candidate. The retained input bytes
+matched their respective accepted layers. After explicit follow-up approval, the controller
+bound all 23 candidate files to accepted preassembly inputs and the copied overlay to the
+accepted assembled output, retaining the three-patch assembly lineage rather than bypassing
+the mismatch. The failed stage/controller were preserved.
+
+The fresh invocation used the cached immutable builder, denied network, read-only inputs and
+isolated output. It changed only source/dependency/output arguments from the retained
+preprocessing vector; no grammar or source was changed to make parsing succeed. Its container
+was positively stopped and removed before preservation checks. No repeat invocation follows.
+
+| Definition | Original lines | Expanded lines | Result |
+|---|---|---|---|
+| `on_download_error_impl` | 5121–5200 | 5085–5164 | Complete for this emitted case; 96 lexical calls |
+| `on_generate_error_impl` | 5202–5233 | 5166–5197 | Complete for this emitted case; 30 lexical calls |
+| `on_upload_error_impl` | 5235–5284 | 5199–5248 | Complete for this emitted case; 45 lexical calls |
+| `on_upload_ok` | 4898–4972 | 4862–4936 | Excluded: missing `>` at expanded4886/original4922; no whole-function call certificate |
+
+The same pinned parser/grammar consumed the compiler-emitted source and line mapping.
+Capture retained 484 dependency identities and observed Linux/x86-64, GCC13.3/C++17 macro
+state at all four entries. Independent parent consumption checked 3,046 protected hashes,
+54 frozen hashes, 5,403 mapped emitted lines and 643 body/call/argument/ancestor ranges.
+The 171 calls include macro-generated logging/check expressions; they are not 171 independent
+resources or proof of asynchronous execution. Original raw gaps are not relabeled repaired.
+
+Concrete consequences for the [repair/stop register](native-g1-repair-owner-register.md):
+
+- Each complete body creates an expanded scope-exit capture calling `try_flush_node`.
+  This is lexical cleanup ownership, not successful physical flush or resource-stop evidence.
+- Download/upload restart branches occur before their local `!was_active` and Close-status
+  handling. A restart marker or callback settlement cannot be treated as terminal transfer
+  completion. Caller guards and the transitive `run_download`/`run_upload` behavior remain
+  separate obligations; this does not diagnose execution after Close.
+- Download handling can dispatch unlink; generation/upload handling can change local/remote
+  location state. No unlink success, rollback, purge or safe exclusion is inferred.
+
+**Stop at the residual upload-success gap.** No alternate grammar, source masking, compiler
+AST/typecheck, additional translation unit or retry is authorized by this result. Full-local
+location and scheduler-finish gaps remain separate. D3, value/attempt ownership, broader
+admission, actual stop, lease release and authenticated reopen remain unproved.
+
+## Retained proposal and host preflight — historical, before execution
+
+The sections below record the earlier unexecuted preparation, not the current execution
+status. Their missing-TU-recipe and scope limitations still apply.
 
 This is a bounded feasibility proposal, not permission to run the compiler, acceptance of
 four functions, or an SDK build recipe. `integrated_engine_accepted=false` and the factory
