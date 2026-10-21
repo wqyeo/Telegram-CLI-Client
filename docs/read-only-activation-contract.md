@@ -31,11 +31,31 @@ Other native effect classes are not implicitly approved by omission.
 | `ReactionManager::init` can call `send_set_default_reaction_query` when `default_reaction_needs_sync` is true | Refuse an incompatible pending setting change; no automatic replay or clearing | Validate original state before import/consumption, prevent the native SET path, and account for runtime producers. Do not clear the flag, skip the RPC and report success, or turn lost promise disposal into completion. |
 | `TopDialogManager::init` can call `send_toggle_top_peers` for nonempty `top_peers_enabled` | Refuse an incompatible pending toggle; no automatic replay or clearing | Validate original intent before consumption and prevent runtime toggle initiation. Merely setting `disable_top_chats` is not an exclusion proof: `update_is_enabled` can persist/send a toggle. |
 
-Exact supported types/encodings, benign disabled/absent states, malformed input and runtime
-producer dispositions for these markers still require explicit family contracts. This policy
-does **not** silently select presence-only refusal, a boolean coercion, a blanket unknown-key
-allowlist, or a new default/cleanup rule. Until those contracts and placements are closed,
-the corresponding activation rows remain blocked.
+### Selected pending-marker admission
+
+After the bounded core-only source review, the operator selected these exact original-state
+rules. They are **contracts, not implemented guards**:
+
+| Store / exact key | Supported original state | Refused state |
+|---|---|---|
+| Config `default_reaction_needs_sync` | Absent or exactly `Bfalse` | `Btrue` and every other present encoding |
+| PMC `top_peers_enabled` | Absent only | Every present entry, including `0`, `1`, empty or malformed bytes |
+
+Both `0` and `1` are native top-peers toggle intent, not benign disabled state. Test actual
+map membership, not whether a getter returns an empty value: a present empty entry is
+also refused. Original validation must precede import/consumption, and incompatible intent
+must never be cleared.
+At runtime, prevent the selected setting-changing operation before local mutation or
+work/promise creation, and independently enforce its native dispatch boundary. A rejected
+void option setter must not allow its caller to continue to RPC dispatch or report success.
+Top-peers error handling can request another toggle; injecting an error after initiation
+is not an exclusion proof.
+
+The necessary config path checks the distinct spelling `default_reaction_need_sync`.
+Do not normalize it into the selected `default_reaction_needs_sync` key or infer alias
+semantics. Its rule, the `default_reaction` value schema, all indirect writers and other
+native effect classes remain unresolved. No unknown-key, migration or cleanup policy is
+selected by these two rules. The corresponding native activation rows remain blocked.
 
 ## Supported-state closure table
 
@@ -49,7 +69,7 @@ reachable schema. Reuse those records rather than start another repository-wide 
 |---|---|---|
 | Store envelope and personal authority | Current G1 filesystem/raw32/binlog-only rules; main DC, personal ID/mirror, auth/salt/time codecs; descriptor9 metadata | Actual phase refusal, complete replay/effect handling, NEW completion and runtime-loss composition. Older descriptors are not adopted. |
 | Config values | Canonical B/I/S framing, exact24 retired-name absence and five fixed-role source guards | Group the other 120 integer contracts by actual compatible semantics; retain explicit rules for every member, dynamic writer and cross-field. Defaults/clamps are observations, not adopted bounds. |
-| Pending setting changes | Passive policy above | Original/runtime marker contracts and enforced native exclusions for every selected effect, including indirect callers; no dropping stored intent. |
+| Pending setting changes | Passive policy and the two exact marker admission rules above | Implement original/runtime/dispatch exclusions, close related schemas and indirect callers, and prove every selected effect excluded; no dropping stored intent. |
 | Versioned/local manager records | Existing family and parser worklists, including notifications, reactions, themes, browser settings, update state and network configuration | Accepted current schemas, absence/cross-field rules, all relevant readers/writers and cleanup/replay dispositions. No permissive-parser/defaulting fallback accepted by inference. |
 | Initialization and replay | Existing NEW/EXISTING traces and fourteen post-auth manager roots | Required-local versus refresh/repair classification and completion ownership; empty replay callbacks still need disposition. SQLite flags off do not establish unreachability. |
 | Files, transfers, repair and deferred capabilities | Existing query/repair/disposal/GC registers; no media/outgoing commands | Enforced native exclusions or complete reachable initialization/resource handling. Missing frontend commands alone do not remove native owners or persisted work. |
@@ -94,7 +114,32 @@ those transport/process events substitutes for the resource observation.
 | Worker/JNI receiver, pipes and parent lease | A genuine generation/profile-bound native observation composed with transport/reader completion; `confirmNativeStopped()` is a trusted call site, not its own proof. |
 
 Process isolation can constrain ownership but does not turn kill, timeout, process death or
-logical Closed into clean flush/stop evidence. No new sharing model or stop API is selected.
+logical Closed into clean flush/stop evidence.
+
+### Selected owned-domain direction
+
+The operator selected a **G1-worker-owned ClientManager domain, one managed client and an
+explicitly owned, wakeable, joinable receiver**, disposed on a control path before process
+teardown. Context-aware G1 creation/send/receive must belong to that domain rather than
+silently use singleton client IDs or the static daemon receiver. Preserve the separate
+account-free execute probe and legacy paths outside the G1 worker's domain. This does not
+add another profile-lock descriptor or change the sole Java lease owner.
+
+The source reason is concrete: current candidate JNI still uses the singleton manager,
+and Java retains no receiver join handle. Native normal shutdown can join, but ExitGuard
+paths detach or skip draining. The singleton declares its manager before its static
+ExitGuard, whose destructor sets the exit flag; normal C++ static teardown is not a chosen
+positive normal-join observation. Earlier last-client cleanup remains a distinct route,
+not proof that all profile resources have stopped.
+
+A future positive-stop result must follow demonstrated normal domain, descendant, I/O,
+queue and resource disposition and joins, bound to the generation/profile. Scheduler
+finish callbacks and destruction remain part of that proof, not just worker-thread joins.
+Then compose it with acknowledgement, EOF, zero exit and completed readers before lease
+release. Dedicated ownership alone proves none of those resource postconditions. On
+failure, ExitGuard fallback or uncertainty, do not fabricate clean stop or permitted reopen.
+No JNI signature, stop API/counter, shutdown deadline or complete resource roster is selected
+or implemented by this architecture decision.
 
 ## Source disposition and activation go/no-go
 
@@ -124,9 +169,9 @@ select a required-work set or solve the following contract boundaries:
 | Boundary | Why the activation contract is not yet implementable |
 |---|---|
 | Supported state | Other 120 integer contracts, versioned/generic manager records, absence/cross-field rules and replay/cleanup dispositions are not closed. The 99-family candidate matrix is not an accepted exhaustive schema. |
-| Passive effects | Exact pending-marker contracts and original/runtime enforcement remain unselected/unimplemented; prohibiting the RPC does not authorize clearing intent or returning fake success. |
+| Passive effects | Two exact marker admission rules are now selected above, but their original/runtime/dispatch enforcement, related schemas and indirect producers remain open; no clearing intent or fake success. |
 | Required completion | D3 still lacks an exact roster with value/attempt-bound success, error, lost-delivery and Close observations; repair/reload cycle freedom is not established. |
-| Actual stop and lease | No generation/profile-bound observation yet composes FileLoad, retries, repair/GC/transfer holders, native sharing/schedulers and worker completion into permitted sole-lease release. |
+| Actual stop and lease | Owned manager/receiver topology is selected, but no generation/profile-bound observation yet composes FileLoad, retries, repair/GC/transfer holders, native schedulers and worker completion into permitted sole-lease release. |
 
 No further compiler campaign follows from this result. The operator subsequently selected
 a bounded [restricted-native-profile design pass](read-only-restricted-native-profile.md)
@@ -159,6 +204,16 @@ Public context: [five-role source increment](native-g1-fixed-roles.md),
 [repair/GC owners](native-g1-repair-owner-register.md),
 [disposal/client Close](native-g1-disposal-and-client-close.md), and
 [prepared preprocessing scope](native-g1-preprocessing-proposal.md).
+
+The later core-only source review used targeted navigation and direct reads of the existing
+candidate and cached pinned sources, not a new compiler or extraction campaign. In addition
+to the effect paths above, it inspected OptionManager import/writers, ConfigManager config
+application, ConnectionCreator startup, UpdatesManager initialization/writers, message
+folder setup, FileManager initialization/Close, and ClientManager/scheduler/JNI ownership.
+Directly inspected continuations constrain the proposal; no complete transitive graph,
+new archive verification or whole-function parser certificate follows. The operator then
+selected the marker rules and owned-domain direction above, not an implementation-ready
+activation package. Broader state, metadata dependencies, D3 and actual stop remain open.
 
 The passive policy is still documentation-only: no implementing native guard/schema/wire,
 SDK/default artifact or production UI changed. The earlier preprocessing invocation and the

@@ -42,7 +42,7 @@ successful smaller implementation merely because it avoids risky work.
 | Reaction/Stickers and notifications/settings | Split optional services from any mandatory message handling | Incoming message representation and notification handling may reach these owners. Entire managers cannot be declared unreachable from their frontend feature names. |
 | Themes, promo, attach-menu, browser/translation and other optional services | Exclude-target startup/refresh/persistence paths | Existing post-auth roots initialize these independently of exposed commands. Simply omitting a root call does not prove constructor, replay, update or destructor paths absent. |
 | Secret chats, outgoing/media and other unsupported work | Preserve refused/unsupported product boundary and prove native exclusion | Flags and command algebra are not transitive replay/constructor/state exclusion. Do not discard pending intent or synthesize successful completion. |
-| ClientManager, scheduler/shared implementation and JNI receiver | Retain controlled ownership until genuine stop | One profile/worker could constrain sharing, but does not establish singleton lifetime, last-owner joins, ExitGuard behavior or receiver completion. No new sharing model is selected. |
+| ClientManager, scheduler/shared implementation and JNI receiver | Retain controlled ownership until genuine stop | The later [owned-domain decision](read-only-activation-contract.md#selected-owned-domain-direction) selects a G1-owned manager and joinable receiver. Resource coverage, normal joins, ExitGuard handling and generation/profile-bound positive stop remain unproved. |
 
 The existing fourteen post-auth roots and 99 persisted-family candidates are worklists, not
 an exhaustive native owner/state universe. This partition must not convert their unknowns
@@ -57,7 +57,7 @@ into an allowlist by omission.
 | `dc_options`, proxy families and required configuration; optional `app_config` | Retain necessary transport subset; optional refresh is an exclusion target | Separate actual formats, fallback and cleanup paths. Core transport cannot be declared absent with the unused services. |
 | `updates.pts`, `updates.qts`, `updates.date` and required dialog/user state | Retain incoming-update necessities | Explicit missing/present/cross-field, writer, discovery and replay rules. Disabling secret chats does not by itself remove a shared qts reader. |
 | `tmp_file_id`, `perm_file_id`, `fast_file_stat`, `files_gc_ts` and related file state | Exclusion targets only where non-use is proved | Metadata versus helper creation is not separated; no inferred counter/size/path domain or blanket file-prefix policy. |
-| Setting intent and optional service caches | Refuse incompatible intent; exclude unused readers/producers only with proof | Exact marker encodings/benign states, cache membership and runtime dispositions remain unresolved. No clearing, default repair or successful skipped SET. |
+| Setting intent and optional service caches | Refuse incompatible intent; exclude unused readers/producers only with proof | Two [exact marker rules](read-only-activation-contract.md#selected-pending-marker-admission) are now selected. Related schemas, cache membership and runtime enforcement remain unresolved. No clearing, default repair or successful skipped SET. |
 
 This table reuses the existing candidate families. It selects no new serialized values,
 unknown-key allowance, opaque retention or schema/version compatibility. Pristine NEW

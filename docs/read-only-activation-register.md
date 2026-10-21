@@ -150,7 +150,9 @@ P1 and the descriptor9 five-role source/component increment are published. The c
 execution checkpoint is the bounded activation contract, not another reader fixture. The
 operator selected passive native effects: no unsolicited presence/default-reaction/top-peers
 changes, and no clearing or replaying incompatible pending intent. Those exclusions are not
-yet implemented; exact marker/state rules, D3 and actual-stop observations remain open.
+yet implemented. Two [exact marker rules](read-only-activation-contract.md#selected-pending-marker-admission)
+and a [G1-owned manager/receiver direction](read-only-activation-contract.md#selected-owned-domain-direction)
+are now selected; related/broader state contracts, D3 and actual-stop observations remain open.
 
 The approved FileManager preprocessing case now supplies three syntax-complete expanded
 error-handler definitions; upload-success remains excluded. Stop at that residual gap without
