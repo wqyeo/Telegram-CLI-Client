@@ -128,11 +128,13 @@ select a required-work set or solve the following contract boundaries:
 | Required completion | D3 still lacks an exact roster with value/attempt-bound success, error, lost-delivery and Close observations; repair/reload cycle freedom is not established. |
 | Actual stop and lease | No generation/profile-bound observation yet composes FileLoad, retries, repair/GC/transfer holders, native sharing/schedulers and worker completion into permitted sole-lease release. |
 
-No further compiler campaign follows from this result. The next scope decision is whether
-to retain the broad native startup surface and close its reachable contracts, or design a
-restricted native startup/capability profile and prove its exclusions. The latter is a
-proposal, not an established safe slice: missing frontend commands, SQL flags or suppressed
-callbacks cannot stand in for native exclusion. Neither direction silently relaxes G1.
+No further compiler campaign follows from this result. The operator subsequently selected
+a bounded [restricted-native-profile design pass](read-only-restricted-native-profile.md)
+rather than broad startup closure. That pass found no established safe slice: whole-map
+config import, necessary network/update state, metadata/transfer ownership and actual stop
+remain concrete blockers. Its proposed owner/state partition does not implement or prove
+exclusions. Missing frontend commands, SQL flags or suppressed callbacks cannot stand in
+for native exclusion. G1 is unchanged; checkpoint 1 remains NO-GO.
 
 Runtime revocation/privacy integration and the original reserved-gap disposition also remain
 open. E1 coherent SDK, E2 actual PUBLIC engine and F genuine acceptance still require their

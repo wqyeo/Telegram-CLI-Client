@@ -82,9 +82,11 @@ FileManager, FileLoaderUtils and ConcurrentScheduler. A filename-assumption cons
 was retained and its existing outputs were consumed after separate approval, without a new
 compiler/parser run. This does not repair the raw-parser exclusions, recover original SDK
 recipes or establish readiness/resource stop. No new compiler campaign is proposed. The
-next explicit scope decision is broad native-startup contract closure versus designing and
-proving a restricted native capability profile; neither is a silent G1 waiver or a ready
-implementation. The [contract decision](read-only-activation-contract.md#source-disposition-and-activation-gono-go)
+operator then selected a bounded [restricted-native-profile design](read-only-restricted-native-profile.md).
+That assessment is also NO-GO: optional-owner exclusions have not been proved, and core
+option/network/update/metadata/stop obligations remain. This is not a G1 waiver, a ready
+implementation or permission for another source campaign. The
+[contract decision](read-only-activation-contract.md#source-disposition-and-activation-gono-go)
 records the remaining boundaries.
 
 ## Supported-slice recommendations, not silent exclusions
