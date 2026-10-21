@@ -1,6 +1,30 @@
-# Four-function source preprocessing — partial source result
+# Source preprocessing and derived front-end results
 
-## Current execution result
+## Later three-unit syntax-only result — activation NO-GO
+
+A separately approved fail-fast batch ran GCC13.3/C++17 with `-fsyntax-only`, saved
+preprocessed inputs and dependency output for FileManager.cpp, FileLoaderUtils.cpp and
+ConcurrentScheduler.cpp. All three driver invocations returned zero; no objects or link
+outputs were produced. These remain dispatcher-derived cases, not recovered original TU
+recipes or supported-SDK certificates. No parser, grammar or source was changed.
+
+The first output consumer failed because it expected an unprefixed `.ii` basename; GCC
+saved `a-FileManager.ii` and the analogous other names. The failed controller/evidence were
+retained. An explicitly approved consumer-only correction validated the existing outputs,
+3,124 protected and 51 frozen identities, dependency counts 484/370/299 and source mappings
+without another compiler/parser invocation. Its container had positively stopped and been
+removed; default artifacts and original/frozen input bytes were preserved. Four pre-existing
+redundant-move warnings were retained, not fixed.
+
+This supplies conditional C++ syntax/type acceptance and manually reviewed source for
+`on_upload_ok`, `check_full_local_location` and the Linux `ConcurrentScheduler::finish`.
+It does not repair their raw-parser exclusions or create new whole-function call certificates.
+FileManager's emitted main source matches the earlier 5,403-line expanded case byte-for-byte.
+See the [activation decision](read-only-activation-contract.md#source-disposition-and-activation-gono-go):
+**checkpoint 1 remains NO-GO**, with no selected D3/positive-stop contract, broader admission
+closure or automatic further compiler campaign. The factory remains fenced.
+
+## Retained preprocessing result — before the syntax-only batch
 
 One explicitly approved, corrected FileManager preprocessing case completed against the
 current descriptor9 overlay and pinned TDLib revision. **Three expanded definitions are
@@ -45,10 +69,11 @@ Concrete consequences for the [repair/stop register](native-g1-repair-owner-regi
 - Download handling can dispatch unlink; generation/upload handling can change local/remote
   location state. No unlink success, rollback, purge or safe exclusion is inferred.
 
-**Stop at the residual upload-success gap.** No alternate grammar, source masking, compiler
-AST/typecheck, additional translation unit or retry is authorized by this result. Full-local
-location and scheduler-finish gaps remain separate. D3, value/attempt ownership, broader
-admission, actual stop, lease release and authenticated reopen remain unproved.
+**This preprocessing result stopped at the residual upload-success gap.** It did not
+authorize a grammar change, source masking, compiler AST/typecheck, another translation
+unit or retry. The later syntax-only batch above required a separate explicit approval;
+it did not rewrite this parser result. D3, value/attempt ownership, broader admission,
+actual stop, lease release and authenticated reopen remain unproved.
 
 ## Retained proposal and host preflight — historical, before execution
 

@@ -1,7 +1,8 @@
 # Passive reader: activation-contract checkpoint
 
-Status: **checkpoint 1 in progress; effect policy selected, complete activation contract
-not established**. Implementation baseline: `035f9b7` (descriptor9 five-role candidate).
+Status: **checkpoint 1 activation decision: NO-GO; effect policy selected, complete
+activation contract not established**. Implementation baseline: `035f9b7`
+(descriptor9 five-role candidate).
 No native guards for the new passive-effect policy are implemented by this document.
 The factory remains fenced; `integrated_engine_accepted=false`.
 
@@ -95,28 +96,48 @@ those transport/process events substitutes for the resource observation.
 Process isolation can constrain ownership but does not turn kill, timeout, process death or
 logical Closed into clean flush/stop evidence. No new sharing model or stop API is selected.
 
-## Named blockers and next source boundary
+## Source disposition and activation go/no-go
 
-The [FileManager preprocessing result](native-g1-preprocessing-proposal.md) now supplies
-three syntax-complete expanded error-handler definitions for one derived Linux case.
-`on_upload_ok` remains excluded with the original-line4922 comparison gap. The original
-FileManager TU recipe is still unavailable; no type, supported-engine, readiness or stop
-certificate follows. Raw gaps retain their original status.
+After the partial [FileManager preprocessing result](native-g1-preprocessing-proposal.md),
+the operator separately approved one fail-fast, three-unit GCC13.3/C++17 syntax-only batch.
+FileManager, FileLoaderUtils and ConcurrentScheduler all returned zero. Four existing
+redundant-move warnings were retained. No object, link, SDK or engine execution occurred.
+The commands are declared dispatcher-derived cases, not recovered original TU recipes.
 
-The three bodies make restart/cleanup ownership more concrete, but do not close it: restart
-branches precede local inactive/Close-status handling, and scope-exit captures call flush
-helpers. Caller guards, actual transfer completion and physical resource stop remain separate.
-The full-local-location helper and scheduler-finish gap were not included.
+The first consumer failed on its saved-file basename assumption, not a compiler error:
+GCC wrote `a-FileManager.ii` rather than `FileManager.ii`, and corresponding names for the
+other units. The failure/controller were retained. A separately approved consumer consumed
+those existing outputs without rerunning GCC or a C++ parser. It checked 3,124 protected and
+51 frozen identities, dependency identities and source-line mappings, and positive container
+termination/removal. FileManager's emitted main-source hash matches the earlier expanded
+case. Original raw-parser exclusions remain excluded; no replacement call certificate follows.
 
-This source step is consumed. Stop at the residual gap: no repeat invocation, changed grammar,
-source masking, compiler AST/typecheck or additional translation unit follows automatically.
-A new scoped decision is needed for further compiler work; checkpoint 1 remains open.
+| Reviewed function | Conditional source observation; not a completion/stop certificate |
+|---|---|
+| `FileManager::on_upload_ok`, lines4898–4972 | The comparison is accepted by this compiler case. The entry Close guard precedes finishing the upload query; later branches pause the upload and invoke callbacks. Success callbacks are not physical stop, and the body explicitly does not flush node information. |
+| `check_full_local_location`, lines273–351 | Checks real path/stat, size and mtime; the skip-size-check branch returns before later per-type bounds. These are native source conditions, not newly selected G1 domains, filesystem authority or transitive I/O-stop proof. |
+| `ConcurrentScheduler::finish`, lines145–191 | This Linux case retains worker joins on the normal path and worker detaches/early return on the ExitGuard path. The Windows IOCP branch is absent. A normal join site is not proof that a genuine ClientManager release reaches it or that all profile resources are covered. |
 
-D3, the positive-stop observation contract, remaining state rules, other effects, runtime
-revocation/privacy integration and the original reserved-gap disposition remain blockers.
-Checkpoint 1 closes only when the supported slice and these contracts are finite and
-implementable, not when this document is published. Do not advance to coupled native
-activation on the strength of this policy increment alone.
+**Activation decision: NO-GO. Checkpoint 2 must not start.** Compiler acceptance does not
+select a required-work set or solve the following contract boundaries:
+
+| Boundary | Why the activation contract is not yet implementable |
+|---|---|
+| Supported state | Other 120 integer contracts, versioned/generic manager records, absence/cross-field rules and replay/cleanup dispositions are not closed. The 99-family candidate matrix is not an accepted exhaustive schema. |
+| Passive effects | Exact pending-marker contracts and original/runtime enforcement remain unselected/unimplemented; prohibiting the RPC does not authorize clearing intent or returning fake success. |
+| Required completion | D3 still lacks an exact roster with value/attempt-bound success, error, lost-delivery and Close observations; repair/reload cycle freedom is not established. |
+| Actual stop and lease | No generation/profile-bound observation yet composes FileLoad, retries, repair/GC/transfer holders, native sharing/schedulers and worker completion into permitted sole-lease release. |
+
+No further compiler campaign follows from this result. The next scope decision is whether
+to retain the broad native startup surface and close its reachable contracts, or design a
+restricted native startup/capability profile and prove its exclusions. The latter is a
+proposal, not an established safe slice: missing frontend commands, SQL flags or suppressed
+callbacks cannot stand in for native exclusion. Neither direction silently relaxes G1.
+
+Runtime revocation/privacy integration and the original reserved-gap disposition also remain
+open. E1 coherent SDK, E2 actual PUBLIC engine and F genuine acceptance still require their
+separate approvals. Publishing this decision does not complete checkpoint 1 or authorize
+coupled native activation.
 
 ## Source and verification boundary
 
@@ -138,7 +159,8 @@ Public context: [five-role source increment](native-g1-fixed-roles.md),
 [prepared preprocessing scope](native-g1-preprocessing-proposal.md).
 
 The passive policy is still documentation-only: no implementing native guard/schema/wire,
-SDK/default artifact or production UI changed. A separately approved single preprocessing
-invocation and bounded source consumption produced the partial result above; no object/link,
-test suite, TDLib engine or account operation occurred. E1 coherent SDK, E2 actual PUBLIC
-engine and F genuine acceptance remain separate approvals.
+SDK/default artifact or production UI changed. The earlier preprocessing invocation and the
+later three syntax-only invocations have distinct retained evidence and approvals; no object,
+link, test suite, TDLib engine or account operation occurred. A consumer failure is retained
+rather than relabeled as a successful task. The source-only consumption does not grant any
+SDK, actual-engine or genuine acceptance.

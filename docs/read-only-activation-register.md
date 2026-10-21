@@ -1,14 +1,15 @@
 # Read-only Telegram client: activation-blocker register
 
 Status: **implementation-facing register; no real activation or revised policy approved here**.
-Baseline: application commit `a313c00`. Inspection of the application/bridge sources and the
-existing G1 findings establishes the gaps below; no new native investigation or runtime was
-performed. The [shared-reader proposal](shared-reader-contract-proposal.md) specifies the
+Original baseline: application commit `a313c00`. That application/bridge inspection used the
+then-existing G1 findings without new native investigation or runtime. Later source-only
+increments below are distinguished from native-engine acceptance. The [shared-reader proposal](shared-reader-contract-proposal.md) specifies the
 smallest application-side implementation package. The subsequent
 [P1 PUBLIC implementation](ordinary-reader-p1.md) supplies that reader plumbing; it does
-not close the native or genuine frontend/activation rows. Incremental execution now starts
-with the [passive-reader activation contract](read-only-activation-contract.md): its native
-effect policy is selected, but checkpoint 1 and the coupled activation contracts remain open.
+not close the native or genuine frontend/activation rows. Incremental execution reached
+the [passive-reader activation decision](read-only-activation-contract.md): **checkpoint 1
+is NO-GO**. The passive effect policy is selected, but a finite implementable supported-state,
+required-work and actual-stop contract is not established. Checkpoint 2 must not start.
 
 ## Product outcome and authority
 
@@ -75,6 +76,16 @@ milestones. A5/A6 then have to connect privacy and the genuine worker to those b
 P1 is a bounded, necessary application delta implemented independently with PUBLIC inputs; after it,
 additional fixture/UI expansion is not the default response to blocked native activation.
 No delivery date or claim that only an SDK build remains is justified by this register.
+
+The later approved three-unit syntax-only batch accepted one declared Linux case each for
+FileManager, FileLoaderUtils and ConcurrentScheduler. A filename-assumption consumer failure
+was retained and its existing outputs were consumed after separate approval, without a new
+compiler/parser run. This does not repair the raw-parser exclusions, recover original SDK
+recipes or establish readiness/resource stop. No new compiler campaign is proposed. The
+next explicit scope decision is broad native-startup contract closure versus designing and
+proving a restricted native capability profile; neither is a silent G1 waiver or a ready
+implementation. The [contract decision](read-only-activation-contract.md#source-disposition-and-activation-gono-go)
+records the remaining boundaries.
 
 ## Supported-slice recommendations, not silent exclusions
 
