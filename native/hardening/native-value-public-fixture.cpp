@@ -401,5 +401,27 @@ int main() {
     }
   }
   check(correct, "fixed-roles-invalid-observation-not-repaired");
+  check(g1::passive_config_marker_present_valid("default_reaction_needs_sync", "Bfalse") &&
+        g1::config_option_entry_codec_valid("default_reaction_needs_sync", "Bfalse"),
+        "passive-reaction-present-exact-Bfalse");
+  correct = true;
+  for (std::string_view value : {"", "Btrue", "B0", "BFalse", "Bfalsex", "I0", "Sfalse", "Bfalse "}) {
+    correct &= !g1::passive_config_marker_present_valid("default_reaction_needs_sync", value) &&
+               !g1::config_option_entry_codec_valid("default_reaction_needs_sync", value);
+  }
+  check(correct, "passive-reaction-present-empty-or-other-encoding-refused");
+  check(g1::passive_config_option_write_valid("default_reaction_needs_sync", "") &&
+        g1::passive_config_option_write_valid("default_reaction_needs_sync", "Bfalse") &&
+        !g1::passive_config_option_write_valid("default_reaction_needs_sync", "Btrue"),
+        "passive-reaction-runtime-erase-is-not-original-present-empty");
+  // Membership alone refuses: no value inspection, including get().empty().
+  check(!g1::passive_pmc_marker_present_valid("top_peers_enabled") &&
+        g1::passive_pmc_marker_present_valid("top_peers_enabledx") &&
+        g1::passive_pmc_marker_present_valid("xtop_peers_enabled"),
+        "passive-top-peers-present-member-refused");
+  check(g1::passive_config_marker_present_valid("default_reaction_need_sync", "Btrue") &&
+        g1::passive_config_marker_present_valid("xdefault_reaction_needs_sync", "Btrue") &&
+        g1::passive_config_marker_present_valid("default_reaction_needs_syncx", "Btrue"),
+        "passive-marker-exact-names-no-alias-or-other-schema-policy");
   std::cout << "PUBLIC_NATIVE_VALUES_ACCEPTED account_engine=0\n";
 }

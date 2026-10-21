@@ -9,7 +9,9 @@ smallest application-side implementation package. The subsequent
 not close the native or genuine frontend/activation rows. Incremental execution reached
 the [passive-reader activation decision](read-only-activation-contract.md): **checkpoint 1
 is NO-GO**. The passive effect policy is selected, but a finite implementable supported-state,
-required-work and actual-stop contract is not established. Checkpoint 2 must not start.
+required-work and actual-stop contract is not established. Coupled activation remains blocked.
+The operator separately permitted the [fenced passive-guard source increment](native-g1-passive-guards.md)
+before that closure; its component evidence is not activation permission.
 
 ## Product outcome and authority
 
@@ -49,7 +51,7 @@ closed only by its specified implementation/evidence, not by producing another d
 
 | ID / accountable boundary | Current blocker and product consequence | Closure deliverable / evidence |
 |---|---|---|
-| **A1 — Native admission coverage** | Supported persisted schemas, original-state/replay/effect dispositions and broader initializer families are not closed. The [five-role candidate](native-g1-fixed-roles.md) now has joined source guards and bounded compilation/PUBLIC component evidence, not actual-phase acceptance; 120 other integer contracts remain open. Binlog-only/UI deferral does not exclude native parsers or service effects. Unsafe to open an account store. | A finite supported-state/family/phase register; necessary D1/D2/D4 decisions; complete guards or enforced compatible exclusions for every reachable row. Preserve identity/exact24/main-DC/raw32/no-repair rules. Reuse inventories; no one-option-at-a-time leaf campaign. |
+| **A1 — Native admission coverage** | Supported persisted schemas, original-state/replay/effect dispositions and broader initializer families are not closed. The [five-role candidate](native-g1-fixed-roles.md) now has joined source guards and bounded compilation/PUBLIC component evidence, not actual-phase acceptance; 120 other integer contracts remain open. The [passive-guard candidate](native-g1-passive-guards.md) adds selected marker and effect source enforcement, not actual-phase evidence. Binlog-only/UI deferral does not exclude other native parsers or service effects. Unsafe to open an account store. | A finite supported-state/family/phase register; necessary D1/D2/D4 decisions; complete guards or enforced compatible exclusions for every reachable row. Preserve identity/exact24/main-DC/raw32/no-repair rules. Reuse inventories; no one-option-at-a-time leaf campaign. |
 | **A2 — Native readiness/completion integration** | Real required-owner completion, value/attempt binding, observed snapshots/wakes and outward publication remain unwired. Callback/Unit/disposal/restart markers are not service success. | Select D3 from a concrete required-work roster without introducing repair/reload cycles; implement combined validators, both seals, semantic-refusal precedence, same-actor final validation and one-flight/wake handling. Joined PUBLIC checks, then E2 evidence; no mechanical descriptor bump. |
 | **A3 — Runtime authority loss** | Storage/auth loss must revoke operations and private views; durable revoked-state/restore behavior is unfinished. A disconnected network is not the same as revoked authority. | Native/application revocation path, pending-work disposition, private-view purge and refused unsafe reopen. Show loss at relevant lifecycle phases without reset/repair/automatic reauthorization. This is logical data disposal, not a claim of perfect erasure. |
 | **A4 — Stop, sole lease and reopen** | FileLoad/retry/GC/transfer descendants, shared native implementation ownership and actual worker stop are not composed. Current PUBLIC close success is insufficient. | A closed reachable resource roster and genuine generation/profile-bound positive stop observation; compose with ack, EOF, zero exit and readers before permitted lease release. Uncertain Close retains honest ownership; kill/timeout/removed handle is not clean flush or stop confirmation. E2 must exercise actual resources and same-store reopen. |
@@ -68,6 +70,12 @@ and both-seal placements, with selected semantic refusal before healthy Changed.
 native objects plus private Java compiled; PUBLIC14 context and 55 value families passed.
 This sequencing change does not select D3 or actual-stop ownership, close broader admission,
 or authorize E1/E2/F. The factory remains fenced.
+
+The later explicitly approved descriptor10 passive-guard increment joins selected original,
+runtime/pre-work and RPC-producer guards. Fourteen native objects plus private Java compiled;
+PUBLIC14 context and 60 value families passed. Neither manager/constructor/seal execution nor
+physical stop was demonstrated. This is another bounded source-sequencing exception, not
+closure of the activation contracts or permission for E1/E2/F.
 
 A1, A2 and A4 are the dominant native critical path. **A proved minimal safe native activation
 slice has not yet been established.** The open integer/schema/effect families must be grouped
@@ -146,13 +154,13 @@ unselected. Existing fixture/request/transport budgets do not establish them.
 
 ## Immediate handoff
 
-P1 and the descriptor9 five-role source/component increment are published. The current
-execution checkpoint is the bounded activation contract, not another reader fixture. The
-operator selected passive native effects: no unsolicited presence/default-reaction/top-peers
-changes, and no clearing or replaying incompatible pending intent. Those exclusions are not
-yet implemented. Two [exact marker rules](read-only-activation-contract.md#selected-pending-marker-admission)
-and a [G1-owned manager/receiver direction](read-only-activation-contract.md#selected-owned-domain-direction)
-are now selected; related/broader state contracts, D3 and actual-stop observations remain open.
+P1, the descriptor9 five-role checkpoint and the [descriptor10 passive-guard source increment](native-g1-passive-guards.md)
+have distinct evidence. The selected passive rules now have joined candidate code and bounded
+component checks; no genuine native phase or account journey is accepted. The
+[G1-owned manager/receiver direction](read-only-activation-contract.md#selected-owned-domain-direction)
+is still a design selection, not an implemented worker. Related/broader state contracts,
+D3, runtime privacy/revocation and actual-stop observations remain open. Do not replace
+those obligations with more reader fixtures or count this source checkpoint as a usable CLI.
 
 The approved FileManager preprocessing case now supplies three syntax-complete expanded
 error-handler definitions; upload-success remains excluded. Stop at that residual gap without

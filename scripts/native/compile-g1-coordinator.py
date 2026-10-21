@@ -18,6 +18,7 @@ digest = controls.digest
 SOURCES = ('CMakeLists.txt', 'td/telegram/Client.h', 'td/telegram/Client.cpp', 'td/telegram/Td.h',
            'td/telegram/Td.cpp', 'td/telegram/TdDb.h', 'td/telegram/TdDb.cpp', 'td/telegram/AuthManager.cpp',
            'td/telegram/OptionManager.cpp', 'td/telegram/OptionManager.h',
+           'td/telegram/OnlineManager.cpp', 'td/telegram/ReactionManager.cpp', 'td/telegram/TopDialogManager.cpp',
            'td/telegram/UserId.h', 'td/telegram/net/NetQueryDispatcher.h',
            'td/telegram/net/NetQueryDispatcher.cpp',
            'example/java/org/drinkless/tdlib/Client.java', 'example/java/td_jni.cpp',

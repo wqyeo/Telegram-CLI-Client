@@ -65,7 +65,8 @@ def main():
                'tddb/td/db/binlog/Binlog.cpp', 'td/telegram/TdDb.cpp', 'td/telegram/Client.cpp',
                'td/telegram/Td.cpp', 'td/telegram/AuthManager.cpp', 'example/java/td_jni.cpp',
                'td/telegram/net/NetQueryDispatcher.cpp', 'tddb/td/db/binlog/ConcurrentBinlog.cpp',
-               'td/telegram/OptionManager.cpp']
+               'td/telegram/OptionManager.cpp', 'td/telegram/OnlineManager.cpp',
+               'td/telegram/ReactionManager.cpp', 'td/telegram/TopDialogManager.cpp']
     if context_public:
         sources = sources[:3]  # No TdDb, Client, Td, AuthManager or JNI in the fixture executable.
         result['scope'] = 'PUBLIC context primitives; native authorization/sync handoffs simulated only'
@@ -124,7 +125,7 @@ def main():
                              'compiled': checked.returncode == 0})
     version = subprocess.run(['g++', '--version'], check=True, capture_output=True, text=True, timeout=10)
     (OUT / 'compiler.txt').write_text(version.stdout)
-    result['allCompiled'] = len(result['checks']) == 12 and all(c['compiled'] for c in result['checks'])
+    result['allCompiled'] = len(result['checks']) == 15 and all(c['compiled'] for c in result['checks'])
     (OUT / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print('JAVA_COMPILED' if checked.returncode == 0 else 'JAVA_COMPILE_FAILED', flush=True)
     return 0 if result['allCompiled'] else 1

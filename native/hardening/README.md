@@ -2,9 +2,10 @@
 
 **Not engine-wide G1, not an account client, and not a replacement JNI/SDK bundle.**
 The approved target and remaining gates are in [`docs/native-g1-contract.md`](../../docs/native-g1-contract.md).
-The latest opt-in coordinator source increment is the [fenced descriptor9 five-role candidate](../../docs/native-g1-fixed-roles.md): joined source guards, eleven compiled native objects
-plus private Java, and PUBLIC14 context/55 value families. This is not phase/engine acceptance;
-the earlier component checkpoints below remain historical and the factory stays fenced.
+The latest opt-in coordinator source increment is the [fenced descriptor10 passive-guard candidate](../../docs/native-g1-passive-guards.md): joined source guards, fourteen compiled native objects
+plus private Java, and PUBLIC14 context/60 value families. This is not phase/engine acceptance;
+the [descriptor9 five-role checkpoint](../../docs/native-g1-fixed-roles.md) and earlier component
+results below remain historical. The factory stays fenced.
 
 This first patch removes automatic corruption destruction from `RawSqliteDb::last_error`,
 refuses missing/inaccessible/empty SQLite main files without orphan-sidecar cleanup or

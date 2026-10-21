@@ -1,9 +1,9 @@
 # Passive reader: activation-contract checkpoint
 
 Status: **checkpoint 1 activation decision: NO-GO; effect policy selected, complete
-activation contract not established**. Implementation baseline: `035f9b7`
-(descriptor9 five-role candidate).
-No native guards for the new passive-effect policy are implemented by this document.
+activation contract not established**. The earlier `035f9b7` descriptor9 five-role baseline
+is followed by a [fenced descriptor10 passive-guard source increment](native-g1-passive-guards.md).
+Its source/component evidence does not establish actual-phase or engine acceptance.
 The factory remains fenced; `integrated_engine_accepted=false`.
 
 The operator approved incremental execution of the [read-only milestone](read-only-activation-register.md),
@@ -34,7 +34,8 @@ Other native effect classes are not implicitly approved by omission.
 ### Selected pending-marker admission
 
 After the bounded core-only source review, the operator selected these exact original-state
-rules. They are **contracts, not implemented guards**:
+rules. Their [joined source guards](native-g1-passive-guards.md) are now implemented and
+component-checked, not actual-phase accepted:
 
 | Store / exact key | Supported original state | Refused state |
 |---|---|---|
@@ -67,9 +68,9 @@ reachable schema. Reuse those records rather than start another repository-wide 
 
 | Batch | Retained decisions / source | Still needed before activation |
 |---|---|---|
-| Store envelope and personal authority | Current G1 filesystem/raw32/binlog-only rules; main DC, personal ID/mirror, auth/salt/time codecs; descriptor9 metadata | Actual phase refusal, complete replay/effect handling, NEW completion and runtime-loss composition. Older descriptors are not adopted. |
+| Store envelope and personal authority | Current G1 filesystem/raw32/binlog-only rules; main DC, personal ID/mirror, auth/salt/time codecs; descriptor10 candidate metadata | Actual phase refusal, complete replay/effect handling, NEW completion and runtime-loss composition. Older descriptors are not adopted. |
 | Config values | Canonical B/I/S framing, exact24 retired-name absence and five fixed-role source guards | Group the other 120 integer contracts by actual compatible semantics; retain explicit rules for every member, dynamic writer and cross-field. Defaults/clamps are observations, not adopted bounds. |
-| Pending setting changes | Passive policy and the two exact marker admission rules above | Implement original/runtime/dispatch exclusions, close related schemas and indirect callers, and prove every selected effect excluded; no dropping stored intent. |
+| Pending setting changes | Selected marker rules and joined original/runtime/RPC-producer source guards | Actual-phase enforcement evidence, related schemas and indirect-caller closure; no dropping stored intent or treating component checks as engine proof. |
 | Versioned/local manager records | Existing family and parser worklists, including notifications, reactions, themes, browser settings, update state and network configuration | Accepted current schemas, absence/cross-field rules, all relevant readers/writers and cleanup/replay dispositions. No permissive-parser/defaulting fallback accepted by inference. |
 | Initialization and replay | Existing NEW/EXISTING traces and fourteen post-auth manager roots | Required-local versus refresh/repair classification and completion ownership; empty replay callbacks still need disposition. SQLite flags off do not establish unreachability. |
 | Files, transfers, repair and deferred capabilities | Existing query/repair/disposal/GC registers; no media/outgoing commands | Enforced native exclusions or complete reachable initialization/resource handling. Missing frontend commands alone do not remove native owners or persisted work. |
@@ -163,13 +164,14 @@ case. Original raw-parser exclusions remain excluded; no replacement call certif
 | `check_full_local_location`, lines273–351 | Checks real path/stat, size and mtime; the skip-size-check branch returns before later per-type bounds. These are native source conditions, not newly selected G1 domains, filesystem authority or transitive I/O-stop proof. |
 | `ConcurrentScheduler::finish`, lines145–191 | This Linux case retains worker joins on the normal path and worker detaches/early return on the ExitGuard path. The Windows IOCP branch is absent. A normal join site is not proof that a genuine ClientManager release reaches it or that all profile resources are covered. |
 
-**Activation decision: NO-GO. Checkpoint 2 must not start.** Compiler acceptance does not
+**Activation decision: NO-GO. Coupled activation remains blocked.** The later explicitly
+approved fenced source increment does not close this gate. Compiler acceptance does not
 select a required-work set or solve the following contract boundaries:
 
 | Boundary | Why the activation contract is not yet implementable |
 |---|---|
 | Supported state | Other 120 integer contracts, versioned/generic manager records, absence/cross-field rules and replay/cleanup dispositions are not closed. The 99-family candidate matrix is not an accepted exhaustive schema. |
-| Passive effects | Two exact marker admission rules are now selected above, but their original/runtime/dispatch enforcement, related schemas and indirect producers remain open; no clearing intent or fake success. |
+| Passive effects | Selected rules now have joined source guards; actual-phase enforcement, related schemas and indirect-producer closure remain open. No clearing intent or fake success. |
 | Required completion | D3 still lacks an exact roster with value/attempt-bound success, error, lost-delivery and Close observations; repair/reload cycle freedom is not established. |
 | Actual stop and lease | Owned manager/receiver topology is selected, but no generation/profile-bound observation yet composes FileLoad, retries, repair/GC/transfer holders, native schedulers and worker completion into permitted sole-lease release. |
 
@@ -215,9 +217,9 @@ new archive verification or whole-function parser certificate follows. The opera
 selected the marker rules and owned-domain direction above, not an implementation-ready
 activation package. Broader state, metadata dependencies, D3 and actual stop remain open.
 
-The passive policy is still documentation-only: no implementing native guard/schema/wire,
-SDK/default artifact or production UI changed. The earlier preprocessing invocation and the
-later three syntax-only invocations have distinct retained evidence and approvals; no object,
-link, test suite, TDLib engine or account operation occurred. A consumer failure is retained
-rather than relabeled as a successful task. The source-only consumption does not grant any
-SDK, actual-engine or genuine acceptance.
+That core-only review did not implement guards or authorize native execution. The operator
+subsequently approved a specific sequencing exception for the [descriptor10 passive guards](native-g1-passive-guards.md),
+which now have 14 compiled native objects/private Java and PUBLIC14 context/60 value-family
+evidence. This does not supersede the earlier source packets' limits, accept actual manager
+phases, implement owned-worker stop, or authorize E1/E2/F. Default artifacts and production
+UI are unchanged; older descriptors are not adopted.

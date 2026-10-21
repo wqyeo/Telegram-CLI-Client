@@ -264,11 +264,25 @@ class FixedRoleGroup final {
   bool valid_ = true;
 };
 
+// Selected original-state rule. Absence is allowed; every PRESENT value must
+// be exactly Bfalse. Runtime erasure is handled separately by the writer guard.
+inline bool passive_config_marker_present_valid(std::string_view name, std::string_view value) {
+  return name != "default_reaction_needs_sync" || value == "Bfalse";
+}
+inline bool passive_config_option_write_valid(std::string_view name, std::string_view value) {
+  return value.empty() || passive_config_marker_present_valid(name, value);
+}
+// Presence, including an empty value, is intent. Never use get().empty().
+inline bool passive_pmc_marker_present_valid(std::string_view name) {
+  return name != "top_peers_enabled";
+}
+
 // The same entry predicate is used by raw quarantine and borrowed seal views.
 // Preserves existing name framing and value grammar; adds ONLY selected absence.
 // Other per-option types/ranges, defaults and legacy/cache rules remain OPEN.
 inline bool config_option_entry_codec_valid(std::string_view name, std::string_view value) {
   return !name.empty() && name.find('\0') == std::string_view::npos && value_utf8_valid(name) &&
-         !retired_config_option_name(name) && config_option_codec_valid(value);
+         !retired_config_option_name(name) && config_option_codec_valid(value) &&
+         passive_config_marker_present_valid(name, value);
 }
 } // namespace telegram_cli::native_g1

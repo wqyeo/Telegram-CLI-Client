@@ -31,7 +31,12 @@ LABELS = ('native-authorized-primary', 'native-authorized-secondary', 'native-em
           'fixed-roles-erase-tags-noncanonical-and-wrong-values', 'fixed-roles-mode-mismatch',
           'fixed-roles-no-other-role-or-self-id-substitution', 'fixed-roles-truncation-extra-and-binary-refused',
           'fixed-roles-exact-names-no-other-option-policy', 'fixed-roles-borrowed-subviews-no-escape-or-mutation',
-          'fixed-roles-invalid-observation-not-repaired')
+          'fixed-roles-invalid-observation-not-repaired',
+          'passive-reaction-present-exact-Bfalse',
+          'passive-reaction-present-empty-or-other-encoding-refused',
+          'passive-reaction-runtime-erase-is-not-original-present-empty',
+          'passive-top-peers-present-member-refused',
+          'passive-marker-exact-names-no-alias-or-other-schema-policy')
 
 
 def main(flags):

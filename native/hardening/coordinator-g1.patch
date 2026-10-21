@@ -147,7 +147,11 @@
  }
 --- a/td/telegram/Td.h
 +++ b/td/telegram/Td.h
-@@ -28,6 +28,8 @@
+@@ -25,9 +25,12 @@
+ #include "td/utils/Slice.h"
+ #include "td/utils/Status.h"
+ 
++#include <atomic>
  #include <memory>
  #include <unordered_map>
  #include <utility>
@@ -156,7 +160,7 @@
  
  namespace td {
  
-@@ -142,6 +144,7 @@
+@@ -142,6 +145,7 @@
  
    struct Options {
      std::shared_ptr<NetQueryStats> net_query_stats;
@@ -164,23 +168,27 @@
    };
  
    Td(unique_ptr<TdCallback> callback, Options options);
-@@ -149,6 +152,10 @@
+@@ -149,6 +153,13 @@
    void request(uint64 id, tl_object_ptr<td_api::Function> function);
  
    void destroy();
 +
 +  // G1 terminal stop / native sync+seal completion. Not user-facing APIs.
 +  void stop_g1();
++  // Synchronous authority revocation, deferred actor Close; never physical stop.
++  bool refuse_g1_passive_effect();
++  bool check_g1_passive_markers_before_consume();
 +  void on_g1_ready(Result<TdDb::AuthorizationSealResult> result);
  
    void on_update(telegram_api::object_ptr<telegram_api::Updates> updates, uint64 auth_key_id);
  
-@@ -398,6 +405,8 @@
+@@ -398,6 +409,9 @@
    int request_actor_refcnt_ = 0;
    int stop_cnt_ = 2;
    bool destroy_flag_ = false;
 +  bool g1_seal_pending_ = false;
 +  bool g1_ready_published_ = false;
++  std::atomic<bool> g1_passive_close_scheduled_{false};
    int close_flag_ = 0;
  
    enum class State : int32 { WaitParameters, Run, Close } state_ = State::WaitParameters;
@@ -239,7 +247,7 @@
    request_set_.emplace(id, function->get_id());
    if (SynchronousRequests::is_synchronous_request(function.get())) {
      // send response synchronously
-@@ -773,10 +810,44 @@
+@@ -773,10 +810,64 @@
  }
  
  void Td::destroy() {
@@ -247,6 +255,26 @@
    close_impl(true);
  }
  
++bool Td::refuse_g1_passive_effect() {
++  if (!td_options_.g1_context) { return false; } // Preserve the non-G1 source path.
++  td_options_.g1_context->stop();
++  // May be called from a child actor/constructor/query handler. Do not re-enter
++  // Td Close here; coalesce the control-path request, not a completion signal.
++  if (!g1_passive_close_scheduled_.exchange(true)) {
++    send_closure_later(actor_id(this), &Td::stop_g1);
++  }
++  return true;
++}
++
++bool Td::check_g1_passive_markers_before_consume() {
++  if (!td_options_.g1_context) { return true; }
++  auto status = G()->td_db()->check_g1_passive_markers_before_consume();
++  if (status.is_ok()) { return true; }
++  status.ignore();
++  refuse_g1_passive_effect();
++  return false;
++}
++
 +void Td::stop_g1() {
 +  if (td_options_.g1_context) { td_options_.g1_context->stop(); }
 +  g1_ready_published_ = false;
@@ -284,7 +312,7 @@
    destroy_flag_ |= destroy_flag;
    if (close_flag_) {
      return;
-@@ -840,6 +911,12 @@
+@@ -840,6 +931,12 @@
    if (r_opened_database.is_error()) {
      LOG(WARNING) << "Failed to open database: " << r_opened_database.error();
      send_closure(actor_id(this), &Td::send_error, set_parameters_request_id_, r_opened_database.move_as_error());
@@ -297,7 +325,7 @@
      return finish_set_parameters();
    }
    auto events = r_opened_database.move_as_ok();
-@@ -861,6 +938,13 @@
+@@ -861,6 +958,13 @@
    G()->init(actor_id(this), std::move(events.database)).ensure();
  
    init_options_and_network();
@@ -311,7 +339,7 @@
  
    // we need to process td_api::getOption along with td_api::setOption for consistency
    // we need to process td_api::setOption before managers and MTProto header are created,
-@@ -1048,6 +1132,9 @@
+@@ -1048,6 +1152,9 @@
    VLOG(td_init) << "Create OptionManager";
    option_manager_ = make_unique<OptionManager>(this);
    G()->set_option_manager(option_manager_.get());
@@ -321,7 +349,7 @@
  
    VLOG(td_init) << "Create ConnectionCreator";
    G()->set_connection_creator(create_actor<ConnectionCreator>("ConnectionCreator", create_reference()));
-@@ -1362,6 +1449,40 @@
+@@ -1362,6 +1469,40 @@
  void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
    CHECK(object != nullptr);
    auto object_id = object->get_id();
@@ -362,7 +390,7 @@
    if (close_flag_ >= 5 && object_id != td_api::updateAuthorizationState::ID) {
      // just in case
      return;
-@@ -1410,6 +1531,16 @@
+@@ -1410,6 +1551,16 @@
  
    auto it = request_set_.find(id);
    if (it != request_set_.end()) {
@@ -379,7 +407,7 @@
      if (object == nullptr) {
        object = td_api::make_object<td_api::error>(404, "Not Found");
      }
-@@ -1440,7 +1571,12 @@
+@@ -1440,7 +1591,12 @@
  
  Result<std::pair<Td::Parameters, TdDb::Parameters>> Td::get_parameters(
      td_api::object_ptr<td_api::setTdlibParameters> parameters) {
@@ -393,7 +421,7 @@
    if (!clean_input_string(parameters->api_hash_) || !clean_input_string(parameters->system_language_code_) ||
        !clean_input_string(parameters->device_model_) || !clean_input_string(parameters->system_version_) ||
        !clean_input_string(parameters->application_version_)) {
-@@ -1460,6 +1596,7 @@
+@@ -1460,6 +1616,7 @@
    result.first.api_hash_ = std::move(parameters->api_hash_);
    result.first.use_secret_chats_ = parameters->use_secret_chats_;
  
@@ -436,17 +464,18 @@
    Slice get_database_directory() const {
      return parameters_.database_directory_;
    }
-@@ -126,6 +138,9 @@
+@@ -126,6 +138,10 @@
    BinlogInterface *get_binlog_impl(const char *file, int line);
  
    std::shared_ptr<KeyValueSyncInterface> get_binlog_pmc_shared();
-+  // Selected fixed-role guards, not required-owner completion or Ready APIs.
++  // Selected role/marker guards, not required-owner completion or Ready APIs.
 +  Status check_g1_options_before_import();
-+  Status check_g1_fixed_role_option(Slice name, Slice value);
++  Status check_g1_guarded_option(Slice name, Slice value);
++  Status check_g1_passive_markers_before_consume();
    std::shared_ptr<KeyValueSyncInterface> get_config_pmc_shared();
  
  #define get_binlog_pmc() get_binlog_pmc_impl(__FILE__, __LINE__)
-@@ -161,6 +176,7 @@
+@@ -161,6 +177,7 @@
  
   private:
    Parameters parameters_;
@@ -474,7 +503,7 @@
  #include "td/telegram/DialogDb.h"
  #include "td/telegram/files/FileDb.h"
  #include "td/telegram/Global.h"
-@@ -14,759 +14,321 @@
+@@ -14,759 +14,339 @@
  #include "td/telegram/MessageDb.h"
  #include "td/telegram/MessageThreadDb.h"
  #include "td/telegram/StoryDb.h"
@@ -565,6 +594,8 @@
 +  // Do not recursively call pmc.get/isset inside this callback.
 +  pmc.for_each([&](Slice key, Slice value) {
 +    auto name = borrowed(key), bytes = borrowed(value);
++    // Every actual member is visited, including present-empty intent.
++    valid &= g1::passive_pmc_marker_present_valid(name);
 +    if (name == "main_dc_id") { main_found = bytes == borrowed(main); valid &= main_found; }
 +    if (name == "server_time_difference") { valid &= g1::server_time_difference_valid(bytes); }
 +    if (name == "config_expire") { valid &= g1::canonical_int32(bytes); }
@@ -591,7 +622,7 @@
 +    valid &= g1::config_option_entry_codec_valid(key, bytes);
 +    roles.observe(key, bytes);
 +  });
-+  // Selected exact24 absence + five fixed roles only. Other option domains,
++  // Selected exact24 absence, five fixed roles and passive reaction marker. Other option domains,
 +  // default/cleanup rules and cross-fields remain an integration blocker.
 +  return valid && roles.valid(require_roles);
 +}
@@ -1351,7 +1382,8 @@
 +  auto context = parameters_.g1_context_;
 +  const bool repeated = g1_option_import_started_;
 +  g1_option_import_started_ = true; // Constructor admission is one-use, even on failure.
-+  if (!context || repeated || !context->validate() || !config_pmc_ ||
++  if (!context || repeated || !context->validate() || !config_pmc_ || !binlog_pmc_ ||
++      binlog_pmc_->isset("top_peers_enabled") ||
 +      context->state() != g1::StorageContext::State::AwaitingAuthorization ||
 +      !config_codecs_valid(*config_pmc_, parameters_.is_test_dc_, !context->is_new())) {
 +    if (context) { context->stop(); }
@@ -1374,10 +1406,13 @@
 -Status TdDb::destroy(const Parameters &parameters) {
 -  SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
 -  Binlog::destroy(get_binlog_path(parameters)).ignore();
-+Status TdDb::check_g1_fixed_role_option(Slice name, Slice value) {
++Status TdDb::check_g1_guarded_option(Slice name, Slice value) {
++  // In particular, erasure must not repair an already-invalid selected marker.
++  TRY_STATUS(check_g1_passive_markers_before_consume());
 +  auto context = parameters_.g1_context_;
 +  if (!context || !context->validate() ||
-+      !g1::fixed_role_option_valid(borrowed(name), borrowed(value), parameters_.is_test_dc_)) {
++      !g1::fixed_role_option_valid(borrowed(name), borrowed(value), parameters_.is_test_dc_) ||
++      !g1::passive_config_option_write_valid(borrowed(name), borrowed(value))) {
 +    if (context) { context->stop(); }
 +    return refused();
 +  }
@@ -1469,6 +1504,18 @@
 -}
 -
 -}  // namespace td
++Status TdDb::check_g1_passive_markers_before_consume() {
++  auto context = parameters_.g1_context_;
++  if (!context || !context->validate() || !binlog_pmc_ || !config_pmc_ ||
++      binlog_pmc_->isset("top_peers_enabled") ||
++      (config_pmc_->isset("default_reaction_needs_sync") &&
++       config_pmc_->get("default_reaction_needs_sync") != "Bfalse")) {
++    if (context) { context->stop(); }
++    return refused();
++  }
++  return Status::OK();
++}
++
 +void TdDb::seal_authorized(Promise<AuthorizationSealResult> promise) {
 +  using Store = BinlogKeyValue<ConcurrentBinlog>;
 +  auto context = parameters_.g1_context_;
@@ -1594,6 +1641,134 @@
    if (auth->tmp_sessions_ > 0) {
      td_->option_manager_->set_option_integer("session_count", auth->tmp_sessions_);
    }
+--- a/td/telegram/OptionManager.cpp
++++ b/td/telegram/OptionManager.cpp
+@@ -56,6 +56,15 @@
+     , current_scheduler_id_(Scheduler::instance()->sched_id())
+     , options_(td::make_unique<TsSeqKeyValue>())
+     , option_pmc_(G()->td_db()->get_config_pmc_shared()) {
++  // Before the first import, decoder, default or outward option update. Only
++  // explicit pristine NEW can initially lack the five fixed-role entries.
++  auto admitted = G()->td_db()->check_g1_options_before_import();
++  if (admitted.is_error()) {
++    admitted.ignore();
++    g1_refused_.store(true);
++    send_closure_later(G()->td(), &Td::stop_g1);
++    return;
++  }
+   send_unix_time_update();
+ 
+   auto &options = options_->inner();
+@@ -84,6 +93,7 @@
+ 
+   bool is_test_dc = G()->is_test_dc();
+   auto set_default_integer_option = [&](string name, int64 value) {
++    if (g1_refused_.load()) { return; }
+     if (options.isset(name)) {
+       if (false && options.get(name) != (PSTRING() << 'I' << value)) {
+         LOG(ERROR) << "Option " << name << " has default value " << value << " instead of "
+@@ -92,6 +102,8 @@
+       return;
+     }
+     auto str_value = PSTRING() << 'I' << value;
++    // This producer bypasses set_option: validate before either map/binlog write.
++    if (!accept_g1_option(name, str_value)) { return; }
+     options.set(name, str_value);
+     option_pmc_->set(name, str_value);
+ 
+@@ -108,6 +120,7 @@
+                              DialogId(UserManager::get_verification_codes_bot_user_id()).get());
+   set_default_integer_option("group_anonymous_bot_user_id", UserManager::get_anonymous_bot_user_id().get());
+   set_default_integer_option("channel_bot_user_id", UserManager::get_channel_bot_user_id().get());
++  if (g1_refused_.load()) { return; } // No further constructor effects after refusal.
+   set_default_integer_option("anti_spam_bot_user_id", UserManager::get_anti_spam_bot_user_id().get());
+   set_default_integer_option("message_caption_length_max", 1024);
+   set_default_integer_option("message_reply_quote_length_max", 1024);
+@@ -389,9 +402,25 @@
+   return value.substr(1);
+ }
+ 
++bool OptionManager::accept_g1_option(Slice name, Slice value) const {
++  if (g1_refused_.load()) { return false; }
++  auto accepted = G()->td_db()->check_g1_guarded_option(name, value);
++  if (accepted.is_ok()) { return true; }
++  accepted.ignore();
++  // Context authority is synchronously revoked by TdDb. Defer actor shutdown:
++  // a constructor/getter must not destroy/re-enter the partially built owner.
++  if (!g1_refused_.exchange(true)) { send_closure_later(G()->td(), &Td::stop_g1); }
++  return false;
++}
++
+ void OptionManager::set_option(Slice name, Slice value) {
+   CHECK(!name.empty());
+   CHECK(Scheduler::instance()->sched_id() == current_scheduler_id_);
++  if (!accept_g1_option(name, value)) { return; }
++  // Only changed post-init writes trigger the top-peers operation below. Keep
++  // original/default local-state policy separate; refuse BEFORE map/PMC mutation.
++  if (name == "disable_top_chats" && is_td_inited_ && get_option(name) != value &&
++      td_->refuse_g1_passive_effect()) { return; }
+   if (value.empty()) {
+     if (options_->erase(name.str()) == 0) {
+       return;
+@@ -769,8 +798,13 @@
+   bool is_bot = td_->auth_manager_ != nullptr && td_->auth_manager_->is_authorized() && td_->auth_manager_->is_bot();
+   auto wrap_promise = [this, &promise, &name] {
+     return PromiseCreator::lambda([this, promise = std::move(promise), name](Unit result) mutable {
+-      // the option is already updated on success, ignore errors
+-      promise.set_value(get_option_value_object(get_option(name)));
++      // Preserve the native refresh behavior, but never decode/publish a
++      // refused fixed-role value or turn it into an empty/default success.
++      auto value = get_option(name);
++      if (!accept_g1_option(name, value)) {
++        return promise.set_error(Status::Error(400, "TGCLI_G1_OPTION_REFUSED"));
++      }
++      promise.set_value(get_option_value_object(value));
+     });
+   };
+   switch (name[0]) {
+@@ -829,6 +863,11 @@
+ 
+ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::OptionValue> &&value,
+                                Promise<Unit> &&promise) {
++  // The internal setters are void; refusal there must not become public success
++  // or permit the separate StateManager update in the online branch.
++  if ((name == "online" || name == "disable_top_chats") && td_->refuse_g1_passive_effect()) {
++    return promise.set_error(400, "TGCLI_G1_PASSIVE_EFFECT_REFUSED");
++  }
+   int32 value_constructor_id = value == nullptr ? td_api::optionValueEmpty::ID : value->get_id();
+ 
+   auto set_integer_option = [&](Slice option_name, int64 min_value = 0,
+@@ -1148,6 +1187,10 @@
+ }
+ 
+ void OptionManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
++  const auto current_options = options_->get_all();
++  for (const auto &option : current_options) {
++    if (!accept_g1_option(option.first, option.second)) { return; }
++  }
+   get_common_state(updates);
+ 
+   updates.push_back(td_api::make_object<td_api::updateOption>(
+@@ -1155,7 +1198,7 @@
+ 
+   updates.push_back(td_api::make_object<td_api::updateOption>("unix_time", get_unix_time_option_value_object()));
+ 
+-  for (const auto &option : options_->get_all()) {
++  for (const auto &option : current_options) {
+     if (!is_internal_option(option.first)) {
+       updates.push_back(
+           td_api::make_object<td_api::updateOption>(option.first, get_option_value_object(option.second)));
+--- a/td/telegram/OptionManager.h
++++ b/td/telegram/OptionManager.h
+@@ -66,6 +66,8 @@
+   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
+ 
+  private:
++  bool accept_g1_option(Slice name, Slice value) const;
++  mutable std::atomic<bool> g1_refused_{false};
+   void set_option(Slice name, Slice value);
+ 
+   void on_option_updated(Slice name);
 --- a/example/java/org/drinkless/tdlib/Client.java
 +++ b/example/java/org/drinkless/tdlib/Client.java
 @@ -17,7 +17,7 @@
@@ -2375,115 +2550,145 @@
    void force_flush() final;
    void change_key(DbKey db_key, Promise<> promise) final;
  
---- a/td/telegram/OptionManager.cpp
-+++ b/td/telegram/OptionManager.cpp
-@@ -56,6 +56,15 @@
-     , current_scheduler_id_(Scheduler::instance()->sched_id())
-     , options_(td::make_unique<TsSeqKeyValue>())
-     , option_pmc_(G()->td_db()->get_config_pmc_shared()) {
-+  // Before the first import, decoder, default or outward option update. Only
-+  // explicit pristine NEW can initially lack the five fixed-role entries.
-+  auto admitted = G()->td_db()->check_g1_options_before_import();
-+  if (admitted.is_error()) {
-+    admitted.ignore();
-+    g1_refused_.store(true);
-+    send_closure_later(G()->td(), &Td::stop_g1);
-+    return;
-+  }
-   send_unix_time_update();
+--- a/td/telegram/OnlineManager.cpp
++++ b/td/telegram/OnlineManager.cpp
+@@ -27,6 +27,8 @@
  
-   auto &options = options_->inner();
-@@ -84,6 +93,7 @@
+  public:
+   NetQueryRef send(bool is_offline) {
++    // Independent RPC-producer fence, before query allocation/dispatch.
++    if (td_->refuse_g1_passive_effect()) { return NetQueryRef(); }
+     is_offline_ = is_offline;
+     auto net_query = G()->net_query_creator().create(telegram_api::account_updateStatus(is_offline));
+     auto result = net_query.get_weak();
+@@ -95,6 +97,7 @@
+     return;
+   }
+   if (force || is_online_) {
++    if (td_->refuse_g1_passive_effect()) { return; }
+     td_->user_manager_->set_my_online_status(is_online_, send_update, true);
+     if (!update_status_query_.empty()) {
+       LOG(INFO) << "Cancel previous update status query";
+@@ -113,6 +116,7 @@
+ }
  
-   bool is_test_dc = G()->is_test_dc();
-   auto set_default_integer_option = [&](string name, int64 value) {
-+    if (g1_refused_.load()) { return; }
-     if (options.isset(name)) {
-       if (false && options.get(name) != (PSTRING() << 'I' << value)) {
-         LOG(ERROR) << "Option " << name << " has default value " << value << " instead of "
-@@ -92,6 +102,8 @@
+ void OnlineManager::on_update_status_success(bool is_online) {
++  if (td_->refuse_g1_passive_effect()) { return; }
+   if (is_online == is_online_) {
+     if (!update_status_query_.empty()) {
+       update_status_query_ = NetQueryRef();
+@@ -130,6 +134,7 @@
+     return;
+   }
+ 
++  if (td_->refuse_g1_passive_effect()) { return; }
+   is_online_ = is_online;
+   if (td_->auth_manager_ != nullptr) {  // postpone if there is no AuthManager yet
+     on_online_updated(true, true);
+--- a/td/telegram/ReactionManager.cpp
++++ b/td/telegram/ReactionManager.cpp
+@@ -145,12 +145,14 @@
+ 
+  public:
+   void send(const ReactionType &reaction_type) {
++    if (td_->refuse_g1_passive_effect()) { return; }
+     reaction_type_ = reaction_type;
+     send_query(
+         G()->net_query_creator().create(telegram_api::messages_setDefaultReaction(reaction_type.get_input_reaction())));
+   }
+ 
+   void on_result(BufferSlice packet) final {
++    if (td_->refuse_g1_passive_effect()) { return; }
+     auto result_ptr = fetch_result<telegram_api::messages_setDefaultReaction>(packet);
+     if (result_ptr.is_error()) {
+       return on_error(result_ptr.move_as_error());
+@@ -169,6 +171,7 @@
+   }
+ 
+   void on_error(Status status) final {
++    if (td_->refuse_g1_passive_effect()) { status.ignore(); return; }
+     if (G()->close_flag()) {
        return;
      }
-     auto str_value = PSTRING() << 'I' << value;
-+    // This producer bypasses set_option: validate before either map/binlog write.
-+    if (!accept_g1_option(name, str_value)) { return; }
-     options.set(name, str_value);
-     option_pmc_->set(name, str_value);
+@@ -469,6 +472,7 @@
+   if (is_inited_ || !td_->auth_manager_->is_authorized() || td_->auth_manager_->is_bot()) {
+     return;
+   }
++  if (!td_->check_g1_passive_markers_before_consume()) { return; }
+   is_inited_ = true;
  
-@@ -108,6 +120,7 @@
-                              DialogId(UserManager::get_verification_codes_bot_user_id()).get());
-   set_default_integer_option("group_anonymous_bot_user_id", UserManager::get_anonymous_bot_user_id().get());
-   set_default_integer_option("channel_bot_user_id", UserManager::get_channel_bot_user_id().get());
-+  if (g1_refused_.load()) { return; } // No further constructor effects after refusal.
-   set_default_integer_option("anti_spam_bot_user_id", UserManager::get_anti_spam_bot_user_id().get());
-   set_default_integer_option("message_caption_length_max", 1024);
-   set_default_integer_option("message_reply_quote_length_max", 1024);
-@@ -389,9 +402,21 @@
-   return value.substr(1);
+   td_->stickers_manager_->init();
+@@ -971,6 +975,9 @@
  }
  
-+bool OptionManager::accept_g1_option(Slice name, Slice value) const {
-+  if (g1_refused_.load()) { return false; }
-+  auto accepted = G()->td_db()->check_g1_fixed_role_option(name, value);
-+  if (accepted.is_ok()) { return true; }
-+  accepted.ignore();
-+  // Context authority is synchronously revoked by TdDb. Defer actor shutdown:
-+  // a constructor/getter must not destroy/re-enter the partially built owner.
-+  if (!g1_refused_.exchange(true)) { send_closure_later(G()->td(), &Td::stop_g1); }
-+  return false;
-+}
-+
- void OptionManager::set_option(Slice name, Slice value) {
-   CHECK(!name.empty());
-   CHECK(Scheduler::instance()->sched_id() == current_scheduler_id_);
-+  if (!accept_g1_option(name, value)) { return; }
-   if (value.empty()) {
-     if (options_->erase(name.str()) == 0) {
-       return;
-@@ -769,8 +794,13 @@
-   bool is_bot = td_->auth_manager_ != nullptr && td_->auth_manager_->is_authorized() && td_->auth_manager_->is_bot();
-   auto wrap_promise = [this, &promise, &name] {
-     return PromiseCreator::lambda([this, promise = std::move(promise), name](Unit result) mutable {
--      // the option is already updated on success, ignore errors
--      promise.set_value(get_option_value_object(get_option(name)));
-+      // Preserve the native refresh behavior, but never decode/publish a
-+      // refused fixed-role value or turn it into an empty/default success.
-+      auto value = get_option(name);
-+      if (!accept_g1_option(name, value)) {
-+        return promise.set_error(Status::Error(400, "TGCLI_G1_OPTION_REFUSED"));
-+      }
-+      promise.set_value(get_option_value_object(value));
-     });
-   };
-   switch (name[0]) {
-@@ -1148,6 +1178,10 @@
- }
- 
- void OptionManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
-+  const auto current_options = options_->get_all();
-+  for (const auto &option : current_options) {
-+    if (!accept_g1_option(option.first, option.second)) { return; }
+ void ReactionManager::set_default_reaction(ReactionType reaction_type, Promise<Unit> &&promise) {
++  if (td_->refuse_g1_passive_effect()) {
++    return promise.set_error(400, "TGCLI_G1_PASSIVE_EFFECT_REFUSED");
 +  }
-   get_common_state(updates);
+   if (reaction_type.is_empty()) {
+     return promise.set_error(400, "Default reaction must be non-empty");
+   }
+@@ -992,6 +999,7 @@
+ }
  
-   updates.push_back(td_api::make_object<td_api::updateOption>(
-@@ -1155,7 +1189,7 @@
+ void ReactionManager::send_set_default_reaction_query() {
++  if (td_->refuse_g1_passive_effect()) { return; }
+   td_->create_handler<SetDefaultReactionQuery>()->send(
+       ReactionType(td_->option_manager_->get_option_string("default_reaction")));
+ }
+--- a/td/telegram/TopDialogManager.cpp
++++ b/td/telegram/TopDialogManager.cpp
+@@ -75,10 +75,16 @@
+   }
  
-   updates.push_back(td_api::make_object<td_api::updateOption>("unix_time", get_unix_time_option_value_object()));
+   void send(bool is_enabled) {
++    if (td_->refuse_g1_passive_effect()) {
++      return promise_.set_error(400, "TGCLI_G1_PASSIVE_EFFECT_REFUSED");
++    }
+     send_query(G()->net_query_creator().create(telegram_api::contacts_toggleTopPeers(is_enabled)));
+   }
  
--  for (const auto &option : options_->get_all()) {
-+  for (const auto &option : current_options) {
-     if (!is_internal_option(option.first)) {
-       updates.push_back(
-           td_api::make_object<td_api::updateOption>(option.first, get_option_value_object(option.second)));
---- a/td/telegram/OptionManager.h
-+++ b/td/telegram/OptionManager.h
-@@ -66,6 +66,8 @@
-   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
+   void on_result(BufferSlice packet) final {
++    if (td_->refuse_g1_passive_effect()) {
++      return promise_.set_error(400, "TGCLI_G1_PASSIVE_EFFECT_REFUSED");
++    }
+     auto result_ptr = fetch_result<telegram_api::contacts_toggleTopPeers>(packet);
+     if (result_ptr.is_error()) {
+       return on_error(result_ptr.move_as_error());
+@@ -129,6 +135,7 @@
+     return;
+   }
  
-  private:
-+  bool accept_g1_option(Slice name, Slice value) const;
-+  mutable std::atomic<bool> g1_refused_{false};
-   void set_option(Slice name, Slice value);
++  if (is_enabled_ != is_enabled && td_->refuse_g1_passive_effect()) { return; }
+   if (set_is_enabled(is_enabled)) {
+     G()->td_db()->get_binlog_pmc()->set("top_peers_enabled", is_enabled ? "1" : "0");
+     send_toggle_top_peers(is_enabled);
+@@ -149,6 +156,8 @@
+ }
  
-   void on_option_updated(Slice name);
+ void TopDialogManager::send_toggle_top_peers(bool is_enabled) {
++  // Before coalescing, flag changes, Promise creation or ResultHandler allocation.
++  if (td_->refuse_g1_passive_effect()) { return; }
+   if (G()->close_flag()) {
+     return;
+   }
+@@ -169,6 +178,11 @@
+ }
+ 
+ void TopDialogManager::on_toggle_top_peers(bool is_enabled, Result<Unit> &&result) {
++  // A defensive dispatch refusal must not erase intent or trigger error resends.
++  if (td_->refuse_g1_passive_effect()) {
++    if (result.is_error()) { result.error().ignore(); }
++    return;
++  }
+   CHECK(have_toggle_top_peers_query_);
+   have_toggle_top_peers_query_ = false;
+ 
+@@ -615,6 +629,7 @@
+     return;
+   }
+ 
++  if (!td_->check_g1_passive_markers_before_consume()) { return; }
+   is_enabled_ = !G()->get_option_boolean("disable_top_chats");
+   update_rating_e_decay();
+ 

@@ -12,7 +12,7 @@ namespace telegram_cli::native_g1 {
 // Deliberately distinct from B1f's component descriptor. No genuine profile may
 // use this draft. Final native semantic/actor/API pins still require acceptance.
 inline constexpr char CoordinatorDescriptor[] =
-    "telegram-cli:g1:coordinator-draft:9\n"
+    "telegram-cli:g1:coordinator-draft:10\n"
     "binding=opaque-context:client-id:worker-generation:1\n"
     "mint=java-held-directory-identity:native-devino-check-before-effects:1\n"
     "namespace=exclusive-new;files=profile/native-files;existing=no-create\n"
@@ -24,6 +24,8 @@ inline constexpr char CoordinatorDescriptor[] =
     "retired-config=constructor-cleanup24:absent;set-sha256=a0cd5a6719bf444e728fa1a2c34ffd2329b164ef360f30b999f3f9d69ae5698b;existing-pre-consumption;seal=capture+recheck:no-repair:1\n"
     "fixed-roles=trusted-testdc:exact5:I+native-ids;existing=required;new=pristine-initial-absence-only;seal=capture+recheck:no-repair:1\n"
     "fixed-role-set-sha256=e9e774776b232224bacea348b077b26e120d46fc2e2c90d9b7619e12cc297a47\n"
+    "passive-markers=config:default_reaction_needs_sync=absent|Bfalse;pmc:top_peers_enabled=absent;original-and-both-seals:no-repair:1\n"
+    "passive-effects=account.updateStatus:online-and-offline;messages.setDefaultReaction;contacts.toggleTopPeers:pre-work-and-rpc-producer-refusal;deferred-close:1\n"
     "startup=server-time:current16:finite:native-domain;config-expire:canonical-int32:1\n"
     "recovery=numbered-auth-salt:canonical-dc;auxiliary-not-primary:1\n"
     "sync=caller-reserved-watermark:1;stable-publication-audit=incomplete\n"
