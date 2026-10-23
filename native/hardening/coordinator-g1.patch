@@ -19,6 +19,18 @@
    /**
     * Sends request to TDLib. May be called from any thread.
     * \param[in] client_id TDLib client instance identifier.
+@@ -122,6 +127,11 @@
+    * \return The request response.
+    */
+   static td_api::object_ptr<td_api::Object> execute(td_api::object_ptr<td_api::Function> &&request);
++
++  // Internal owned-G1 bridge: single receiver and explicit event-driven wake.
++  // These operations do not observe physical resource stop.
++  Response receive_g1_owned();
++  void wake_g1_owned();
+ 
+   /**
+    * A type of callback function that will be called when a message is added to the internal TDLib log.
 --- a/td/telegram/Client.cpp
 +++ b/td/telegram/Client.cpp
 @@ -7,6 +7,7 @@
@@ -85,7 +97,35 @@
      set_context(std::move(old_context));
      set_tag(std::move(old_tag));
    }
-@@ -380,10 +390,11 @@
+@@ -277,7 +287,7 @@
+     output_queue_->init();
+   }
+ 
+-  ClientManager::Response receive(double timeout, bool from_manager) {
++  ClientManager::Response receive(double timeout, bool from_manager, bool owned_blocking = false) {
+     VLOG(td_requests) << "Begin to wait for updates with timeout " << timeout;
+     auto is_locked = receive_lock_.exchange(true);
+     if (is_locked) {
+@@ -288,7 +298,17 @@
+         LOG(FATAL) << "Receive is called after Client destroy, or simultaneously from different threads";
+       }
+     }
+-    auto response = receive_unlocked(clamp(timeout, 0.0, 1000000.0));
++    ClientManager::Response response;
++    if (owned_blocking) {
++      while (output_queue_ready_cnt_ == 0) {
++        output_queue_ready_cnt_ = output_queue_->reader_wait_nonblock();
++        if (output_queue_ready_cnt_ == 0) { output_queue_->reader_get_event_fd().wait(-1); }
++      }
++      output_queue_ready_cnt_--;
++      response = output_queue_->reader_get_unsafe();
++    } else {
++      response = receive_unlocked(clamp(timeout, 0.0, 1000000.0));
++    }
+     is_locked = receive_lock_.exchange(false);
+     CHECK(is_locked);
+     VLOG(td_requests) << "End to wait for updates, returning object " << response.request_id << ' '
+@@ -380,10 +400,11 @@
      return static_cast<int32>(result);
    }
  
@@ -99,7 +139,7 @@
    }
  
    static bool is_valid_client_id(int32 client_id) {
-@@ -478,12 +489,12 @@
+@@ -478,12 +499,12 @@
  
  class ClientManager::Impl final {
   public:
@@ -115,7 +155,7 @@
      }
      return client_id;
    }
-@@ -504,7 +515,7 @@
+@@ -504,7 +525,7 @@
        it = impls_.find(client_id);
        if (it != impls_.end() && it->second.impl == nullptr) {
          it->second.impl = pool_.get();
@@ -124,7 +164,20 @@
        }
        write_lock.reset();
  
-@@ -585,6 +596,7 @@
+@@ -518,8 +539,10 @@
+     it->second.impl->send(client_id, request_id, std::move(request));
+   }
+ 
+-  Response receive(double timeout) {
+-    auto response = receiver_.receive(timeout, true);
++  void wake_g1_owned() { receiver_.add_response(0, 0, nullptr); }
++
++  Response receive(double timeout, bool owned_blocking = false) {
++    auto response = receiver_.receive(timeout, true, owned_blocking);
+     if (response.request_id == 0 && response.object != nullptr &&
+         response.object->get_id() == td_api::updateAuthorizationState::ID &&
+         static_cast<const td_api::updateAuthorizationState *>(response.object.get())->authorization_state_->get_id() ==
+@@ -585,6 +608,7 @@
    RwMutex impls_mutex_;
    struct MultiImplInfo {
      std::shared_ptr<MultiImpl> impl;
@@ -132,7 +185,7 @@
      bool is_closed = false;
    };
    FlatHashMap<ClientId, MultiImplInfo> impls_;
-@@ -671,6 +683,12 @@
+@@ -671,12 +695,32 @@
    return impl_->create_client_id();
  }
  
@@ -145,6 +198,26 @@
  void ClientManager::send(ClientId client_id, RequestId request_id, td_api::object_ptr<td_api::Function> &&request) {
    impl_->send(client_id, request_id, std::move(request));
  }
+ 
+ ClientManager::Response ClientManager::receive(double timeout) {
+   return impl_->receive(timeout);
++}
++
++ClientManager::Response ClientManager::receive_g1_owned() {
++#if TD_THREAD_UNSUPPORTED || TD_EVENTFD_UNSUPPORTED
++  return {0, 0, nullptr};  // Owned factory refuses this platform.
++#else
++  return impl_->receive(0, true);
++#endif
++}
++
++void ClientManager::wake_g1_owned() {
++#if !TD_THREAD_UNSUPPORTED && !TD_EVENTFD_UNSUPPORTED
++  impl_->wake_g1_owned();
++#endif
+ }
+ 
+ td_api::object_ptr<td_api::Object> ClientManager::execute(td_api::object_ptr<td_api::Function> &&request) {
 --- a/td/telegram/Td.h
 +++ b/td/telegram/Td.h
 @@ -25,9 +25,12 @@
@@ -1847,31 +1920,155 @@
          if (updateHandler != null) {
              updateHandlers.put(nativeClientId, new Handler(updateHandler, updateExceptionHandler));
          }
-@@ -249,6 +297,13 @@
+@@ -247,7 +295,123 @@
+         send(new TdApi.GetOption("version"), null, null);
+     }
  
++    /** Internal G1 SDK seam, not a genuine worker launcher. Factory remains fenced. */
++    public static OwnedSession createOwnedSession(long contextHandle, String generation, OwnedEventHandler handler) {
++        return new OwnedSession(contextHandle, generation, handler);
++    }
++
++    public interface OwnedEventHandler {
++        void onEvent(long requestId, TdApi.Object object);
++    }
++
++    /** No value in this enum grants native-stop or profile-lease release authority. */
++    public enum OwnedObservation {
++        OPEN, CLOSE_REQUESTED, DOMAIN_DISPOSED_UNVERIFIED, FAILED_UNVERIFIED
++    }
++
++    /** Deliberately not AutoCloseable: scope exit is not native-stop evidence. */
++    public static final class OwnedSession {
++        private final long handle;
++        private final String generation;
++        private final OwnedEventHandler handler;
++        private final Thread receiver;
++        private volatile OwnedObservation observation = OwnedObservation.OPEN;
++        private volatile boolean failed;
++
++        private OwnedSession(long contextHandle, String generation, OwnedEventHandler handler) {
++            if (contextHandle <= 0 || generation == null || handler == null) {
++                throw new IllegalArgumentException("TGCLI_G1_DOMAIN_REFUSED");
++            }
++            this.generation = generation;
++            this.handler = handler;
++            handle = createOwnedDomain(contextHandle, generation);
++            if (handle <= 0) { throw new IllegalStateException("TGCLI_G1_DOMAIN_REFUSED"); }
++            try {
++                receiver = new Thread(this::receiveLoop, "G1 owned receiver");
++                receiver.setDaemon(false);
++                receiver.start();
++            }
++            catch (Throwable failure) {
++                try { ownedDispose(handle, generation, true); } catch (Throwable ignored) { }
++                throw new IllegalStateException("TGCLI_G1_RECEIVER_START_REFUSED");
++            }
++        }
++
++        // Internal SDK transport only. The future worker must enforce its typed allowlist.
++        // Events can race send's return; the adapter must use the shared ordered core.
++        public long send(TdApi.Function function) {
++            if (observation != OwnedObservation.OPEN) { throw new IllegalStateException("TGCLI_G1_DOMAIN_REFUSED"); }
++            return ownedSend(handle, generation, function);
++        }
++
++        public synchronized void requestClose() {
++            if (observation != OwnedObservation.OPEN) { return; }
++            observation = OwnedObservation.CLOSE_REQUESTED;
++            try { ownedClose(handle, generation); }
++            catch (Throwable failure) {
++                failed = true;
++                throw new IllegalStateException("TGCLI_G1_CLOSE_UNVERIFIED");
++            }
++        }
++
++        public OwnedObservation observation() { return observation; }
++
++        public OwnedObservation awaitDisposal() throws InterruptedException {
++            if (Thread.currentThread() == receiver) {
++                throw new IllegalStateException("TGCLI_G1_RECEIVER_SELF_JOIN_REFUSED");
++            }
++            receiver.join(); // No polling interval or completion deadline selected.
++            return observation; // Even DOMAIN_DISPOSED_UNVERIFIED is NOT native stop.
++        }
++
++        private void receiveLoop() {
++            long[] ids = new long[1];
++            TdApi.Object[] events = new TdApi.Object[1];
++            boolean retired = false;
++            try {
++                while (true) {
++                    int count = ownedReceive(handle, generation, ids, events);
++                    if (count == -1) { retired = true; break; }
++                    if (count == 0) { continue; } // Native control wake, not an API event.
++                    TdApi.Object event = events[0];
++                    events[0] = null;
++                    boolean closed = event instanceof TdApi.UpdateAuthorizationState &&
++                            ((TdApi.UpdateAuthorizationState) event).authorizationState instanceof TdApi.AuthorizationStateClosed;
++                    if (closed) { observation = OwnedObservation.CLOSE_REQUESTED; }
++                    if (observation == OwnedObservation.OPEN || closed) {
++                        try { handler.onEvent(ids[0], event); }
++                        catch (Throwable failure) { failed = true; requestClose(); }
++                    }
++                }
++            } catch (Throwable failure) {
++                failed = true;
++                try { requestClose(); } catch (Throwable ignored) { }
++            } finally {
++                events[0] = null;
++                if (retired) {
++                    try {
++                        if (!ownedDispose(handle, generation, false)) { failed = true; }
++                    } catch (Throwable failure) { failed = true; }
++                } else { failed = true; }
++                observation = failed ? OwnedObservation.FAILED_UNVERIFIED : OwnedObservation.DOMAIN_DISPOSED_UNVERIFIED;
++            }
++        }
++    }
++
++    private static native long createOwnedDomain(long contextHandle, String generation);
++    private static native long ownedSend(long handle, String generation, TdApi.Function function);
++    private static native void ownedClose(long handle, String generation);
++    private static native int ownedReceive(long handle, String generation, long[] ids, TdApi.Object[] events);
++    private static native boolean ownedDispose(long handle, String generation, boolean unstarted);
++
      private static native int createNativeClient();
- 
++
 +    private static native int createNativeClientWithContext(long contextHandle, String generation);
 +
 +    private static native long prepareNativeStorageContext(String profilePath, String profileName, String generation,
 +                                                           long device, long inode, boolean isNew, boolean testDc);
 +
 +    private static native boolean abandonNativeStorageContext(long contextHandle, String generation);
-+
+ 
      private static native void nativeClientSend(int nativeClientId, long eventId, TdApi.Function function);
  
-     private static native int nativeClientReceive(int[] clientIds, long[] eventIds, TdApi.Object[] events, double timeout);
 --- a/example/java/td_jni.cpp
 +++ b/example/java/td_jni.cpp
-@@ -8,6 +8,7 @@
+@@ -8,7 +8,10 @@
  #include <td/telegram/td_json_client.h>
  #else
  #include <td/telegram/Client.h>
 +#include <td/telegram/g1/g1-storage-context.h>
  #include <td/telegram/td_api.h>
++#include <td/utils/ExitGuard.h>
++#include <td/utils/port/config.h>
  #endif
  
-@@ -60,6 +61,66 @@
+ #include <td/tl/tl_jni_object.h>
+@@ -17,6 +20,10 @@
+ #include <cstdlib>
+ #include <string>
+ #include <utility>
++#include <limits>
++#include <mutex>
++#include <thread>
++#include <unordered_map>
+ 
+ namespace td_jni {
+ 
+@@ -60,6 +67,200 @@
  
  static jint Client_createNativeClient(JNIEnv *env, jclass clazz) {
    return static_cast<jint>(get_manager()->create_client_id());
@@ -1915,30 +2112,164 @@
 +      ? JNI_TRUE : JNI_FALSE;
 +}
 +
-+static jint Client_createNativeClientWithContext(JNIEnv *env, jclass clazz, jlong handle, jstring generation) {
-+  namespace g1 = telegram_cli::native_g1;
-+  auto context = g1::take_context_handle(static_cast<std::int64_t>(handle), td::jni::from_jstring(env, generation));
-+  // Deliberate draft activation fence, not a runtime override. Native per-value
-+  // schema/actor acceptance and whole-engine execution approval are still pending.
-+  if (!context || !integrated_engine_accepted) {
-+    if (context) { context->stop(); }
-+    jclass error = env->FindClass("java/lang/IllegalStateException");
-+    if (error) {
-+      env->ThrowNew(error, "TGCLI_G1_INTEGRATION_NOT_ACCEPTED");
-+      env->DeleteLocalRef(error);
++// Owned G1 handles are registry IDs, never pointers, FDs or singleton client IDs.
++// Disposal below is deliberately NOT a physical-stop/lease-release observation.
++struct OwnedDomain {
++  std::mutex mutex;
++  std::shared_ptr<telegram_cli::native_g1::StorageContext> context;
++  std::unique_ptr<td::ClientManager> manager;
++  std::string generation;
++  td::ClientManager::ClientId client;
++  std::int64_t next_request = 0;
++  std::thread::id receiver;
++  bool closing = false, retired = false, reading = false, disposed = false;
++  explicit OwnedDomain(std::shared_ptr<telegram_cli::native_g1::StorageContext> value)
++      : context(std::move(value)), manager(std::make_unique<td::ClientManager>()),
++        generation(context->generation()), client(manager->create_client_id(context)) {}
++};
++static std::mutex owned_registry_mutex;
++static std::unordered_map<std::int64_t, std::shared_ptr<OwnedDomain>> owned_registry;
++static std::int64_t next_owned_handle = 0;
++
++static std::shared_ptr<OwnedDomain> owned_lookup(JNIEnv *env, jlong handle, jstring generation) {
++  if (handle <= 0 || !generation) { context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return {}; }
++  auto epoch = td::jni::from_jstring(env, generation);
++  if (env->ExceptionCheck()) { return {}; }
++  std::lock_guard<std::mutex> lock(owned_registry_mutex);
++  auto it = owned_registry.find(handle);
++  if (it == owned_registry.end() || it->second->generation != epoch) {
++    context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return {};
++  }
++  return it->second;
++}
++
++static jlong Client_createOwnedDomain(JNIEnv *env, jclass, jlong handle, jstring generation) {
++  if (!integrated_engine_accepted) { context_error(env, "TGCLI_G1_INTEGRATION_NOT_ACCEPTED"); return 0; }
++#if TD_THREAD_UNSUPPORTED || TD_EVENTFD_UNSUPPORTED
++  context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
++#else
++  if (!generation) { context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0; }
++  auto epoch = td::jni::from_jstring(env, generation);
++  if (env->ExceptionCheck()) { return 0; }
++  auto context = telegram_cli::native_g1::take_context_handle(handle, epoch);
++  if (!context) { context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0; }
++  auto domain = std::make_shared<OwnedDomain>(context);
++  if (domain->client <= 0) { context->stop(); context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0; }
++  std::lock_guard<std::mutex> lock(owned_registry_mutex);
++  if (next_owned_handle == std::numeric_limits<std::int64_t>::max()) {
++    context->stop(); context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
++  }
++  auto id = ++next_owned_handle;
++  owned_registry.emplace(id, std::move(domain));
++  return id;
++#endif
++}
++
++static jlong Client_ownedSend(JNIEnv *env, jclass, jlong handle, jstring generation, jobject function) {
++  auto domain = owned_lookup(env, handle, generation); if (!domain) { return 0; }
++  std::lock_guard<std::mutex> lock(domain->mutex);
++  if (domain->closing || domain->disposed || !function || !domain->context->validate() ||
++      domain->next_request >= std::numeric_limits<std::int64_t>::max() - 1) {
++    context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
++  }
++  td::jni::reset_parse_error();
++  auto request = td::td_api::Function::fetch(env, function);
++  if (env->ExceptionCheck() || td::jni::have_parse_error() || !request) {
++    context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
++  }
++  auto id = ++domain->next_request;
++  domain->manager->send(domain->client, id, std::move(request));
++  return id;
++}
++
++static void Client_ownedClose(JNIEnv *env, jclass, jlong handle, jstring generation) {
++  auto domain = owned_lookup(env, handle, generation); if (!domain) { return; }
++  std::lock_guard<std::mutex> lock(domain->mutex);
++  if (domain->closing) { return; }
++  domain->closing = true;
++  if (domain->next_request != 0) {
++    if (domain->next_request == std::numeric_limits<std::int64_t>::max()) {
++      context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return;
 +    }
-+    return 0;
++    // Allocate from the SAME request sequence, not a reserved/fabricated ID.
++    // Normal Close reaches close_impl(false), never stop_g1's auth=destroy path.
++    domain->manager->send(domain->client, ++domain->next_request, td::td_api::make_object<td::td_api::close>());
 +  }
-+  auto id = get_manager()->create_client_id(std::move(context));
-+  if (id <= 0) {
-+    jclass error = env->FindClass("java/lang/IllegalStateException");
-+    if (error) { env->ThrowNew(error, "TGCLI_G1_CONTEXT_REFUSED"); env->DeleteLocalRef(error); }
++  // Let the Td actor revoke context inside normal close_impl. Stopping it here
++  // could make an earlier queued seal callback take terminal stop_g1 instead.
++  domain->manager->wake_g1_owned();
++}
++
++static jint Client_ownedReceive(JNIEnv *env, jclass, jlong handle, jstring generation,
++                               jlongArray ids, jobjectArray events) {
++  if (!ids || !events || env->GetArrayLength(ids) != 1 || env->GetArrayLength(events) != 1) {
++    context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
 +  }
-+  return static_cast<jint>(id);
++  auto domain = owned_lookup(env, handle, generation); if (!domain) { return 0; }
++  {
++    std::lock_guard<std::mutex> lock(domain->mutex);
++    auto self = std::this_thread::get_id();
++    if (domain->disposed || domain->reading || (domain->receiver != std::thread::id{} && domain->receiver != self)) {
++      context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
++    }
++    domain->receiver = self;
++    if (domain->retired || (domain->closing && domain->next_request == 0)) { domain->retired = true; return -1; }
++    domain->reading = true;
++  }
++  auto response = domain->manager->receive_g1_owned();
++  {
++    std::lock_guard<std::mutex> lock(domain->mutex);
++    domain->reading = false;
++    if (response.object && response.client_id != domain->client) {
++      context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return 0;
++    }
++    if (response.request_id == 0 && response.object &&
++        response.object->get_id() == td::td_api::updateAuthorizationState::ID &&
++        static_cast<td::td_api::updateAuthorizationState *>(response.object.get())->authorization_state_->get_id() ==
++            td::td_api::authorizationStateClosed::ID) { domain->closing = true; domain->retired = true; }
++  }
++  if (!response.object) { return 0; } // Control wake, NOT a synthetic API event.
++  jlong id = static_cast<jlong>(response.request_id);
++  env->SetLongArrayRegion(ids, 0, 1, &id);
++  jobject object;
++  response.object->store(env, object);
++  env->SetObjectArrayElement(events, 0, object);
++  env->DeleteLocalRef(object);
++  return env->ExceptionCheck() ? 0 : 1;
++}
++
++static jboolean Client_ownedDispose(JNIEnv *env, jclass, jlong handle, jstring generation, jboolean unstarted) {
++  auto domain = owned_lookup(env, handle, generation); if (!domain) { return JNI_FALSE; }
++  std::unique_ptr<td::ClientManager> manager;
++  {
++    std::lock_guard<std::mutex> lock(domain->mutex);
++    bool construction_only = unstarted && domain->receiver == std::thread::id{} && domain->next_request == 0;
++    bool receiver_retired = !unstarted && domain->receiver == std::this_thread::get_id() && domain->retired;
++    if (domain->disposed || domain->reading || td::ExitGuard::is_exited() || (!construction_only && !receiver_retired)) {
++      context_error(env, "TGCLI_G1_DOMAIN_REFUSED"); return JNI_FALSE;
++    }
++    domain->closing = true;
++    manager = std::move(domain->manager);
++  }
++  manager.reset(); // Normal disposal OUTSIDE registry/domain locks, on the owned receiver.
++  {
++    std::lock_guard<std::mutex> lock(domain->mutex);
++    domain->context->stop(); domain->context.reset(); domain->disposed = true;
++  }
++  {
++    std::lock_guard<std::mutex> lock(owned_registry_mutex);
++    owned_registry.erase(handle);
++  }
++  return JNI_TRUE; // DOMAIN_DISPOSED_UNVERIFIED only. NEVER lease-release authority.
++}
++
++static jint Client_createNativeClientWithContext(JNIEnv *env, jclass, jlong, jstring) {
++  // G1 cannot silently enter the singleton/static-daemon path, even after acceptance.
++  context_error(env, "TGCLI_G1_OWNED_DOMAIN_REQUIRED"); return 0;
  }
  
  static void Client_nativeClientSend(JNIEnv *env, jclass clazz, jint client_id, jlong id, jobject function) {
-@@ -214,6 +275,10 @@
+@@ -214,6 +415,15 @@
  #define TD_OBJECT "L" PACKAGE_NAME "/TdApi$Object;"
  #define TD_FUNCTION "L" PACKAGE_NAME "/TdApi$Function;"
    register_method(client_class, "createNativeClient", "()I", Client_createNativeClient);
@@ -1946,6 +2277,11 @@
 +  register_method(client_class, "prepareNativeStorageContext", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZZ)J",
 +                  Client_prepareNativeStorageContext);
 +  register_method(client_class, "abandonNativeStorageContext", "(JLjava/lang/String;)Z", Client_abandonNativeStorageContext);
++  register_method(client_class, "createOwnedDomain", "(JLjava/lang/String;)J", Client_createOwnedDomain);
++  register_method(client_class, "ownedSend", "(JLjava/lang/String;" TD_FUNCTION ")J", Client_ownedSend);
++  register_method(client_class, "ownedClose", "(JLjava/lang/String;)V", Client_ownedClose);
++  register_method(client_class, "ownedReceive", "(JLjava/lang/String;[J[" TD_OBJECT ")I", Client_ownedReceive);
++  register_method(client_class, "ownedDispose", "(JLjava/lang/String;Z)Z", Client_ownedDispose);
    register_method(client_class, "nativeClientSend", "(IJ" TD_FUNCTION ")V", Client_nativeClientSend);
    register_method(client_class, "nativeClientReceive", "([I[J[" TD_OBJECT "D)I", Client_nativeClientReceive);
    register_method(client_class, "nativeClientExecute", "(" TD_FUNCTION ")" TD_OBJECT, Client_nativeClientExecute);

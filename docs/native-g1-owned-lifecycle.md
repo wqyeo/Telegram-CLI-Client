@@ -1,8 +1,10 @@
 # G1 owned native lifecycle contract
 
-Status: **ownership and operation roles selected; full physical-stop contract OPEN**.
-This checkpoint follows the fenced [passive-guard increment](native-g1-passive-guards.md).
-It does not implement a worker, JNI domain, receiver or stop API. The factory remains fenced;
+Status: **fenced domain/JNI/receiver source compiled; full physical-stop contract OPEN**.
+The contract checkpoint follows the [passive-guard increment](native-g1-passive-guards.md).
+A later explicit sequencing exception permits the source implementation below before full
+stop/parent-death closure. No genuine worker launcher or positive-stop API is implemented.
+The factory remains fenced;
 `integrated_engine_accepted=false`. E1, E2, F, sends and releases remain separate gates.
 
 ## Selected ownership
@@ -27,8 +29,8 @@ an authority token. The complete attestation/IPC integration remains unimplement
 
 ## Operation roles and ordering
 
-These are proposed private implementation roles, **not selected JNI signatures or wire tags**.
-They define the obligations a fenced implementation must preserve.
+These operation roles govern the private source candidate below. Its JNI signatures are
+compiled source interfaces, **not accepted runtime APIs or application wire tags**.
 
 | Role | Preconditions and required behavior |
 |---|---|
@@ -44,7 +46,7 @@ Close must define the linearization with in-flight submissions and retain the do
 admitted JNI calls use it. Removing a registry entry or returning from a Java close method
 cannot free a still-used manager. Handle reuse, cross-generation delivery and fallback to
 legacy global handler maps are forbidden. Concrete handle/API and synchronization design
-still require review before implementation.
+require actual-phase enforcement evidence before activation.
 
 ### Normal Close is not refusal Close
 
@@ -89,7 +91,7 @@ blocker; parent ownership alone is not a complete exclusive-lifetime proof.
 
 ## Bounded source findings and implementation boundary
 
-Manual reads of the published descriptor10 candidate show:
+Manual reads of the preceding passive-guard descriptor10 candidate showed:
 
 - `ClientManager::Impl` owns its pool; receive suppresses raw Closed, retires the mapping
   after callback disposal and can erase the last `MultiImpl` owner inside receive.
@@ -102,12 +104,57 @@ Manual reads of the published descriptor10 candidate show:
   its own lease and never creates a genuine TDLib session.
 
 These are bounded source observations, not a complete transitive resource/call certificate.
-No compiler, parser campaign, engine or account was run for this checkpoint. The native
-code, descriptor10 identity, record layout and existing evidence stages remain unchanged.
+No compiler, parser campaign, engine or account was run for the original contract checkpoint.
+The subsequent source compilation below does not upgrade these observations into stop proof.
+The descriptor10 admission identity and record layout remain unchanged; prior source and
+consumed evidence stages are preserved.
 
-**Checkpoint result:** selected ownership and normal-close/control obligations are recorded.
-The full stop/resource roster, parent-death safety and concrete JNI/synchronization contract
-are not yet implementation-ready. A new explicitly bounded source-sequencing permission is
-needed before lifecycle plumbing can proceed ahead of that closure. Such plumbing must not
-expose positive stop, release the lease, launch a genuine worker or activate the factory.
-The remaining [activation obligations](read-only-activation-contract.md) are unchanged.
+## Explicitly permitted fenced source increment
+
+The operator subsequently permitted joined domain/JNI/receiver source before the full
+stop/parent-death contracts close, with one bounded component compilation. This changes
+sequencing only. The candidate is carried by `native/hardening/coordinator-g1.patch`:
+
+- Each owned domain has its own ClientManager and sole client. Its registry handle is not
+  a pointer, FD or singleton client ID. Generation lookup precedes submission/receive;
+  context consumption retains the existing one-use profile binding. Future worker
+  orchestration must still enforce its single-domain topology and typed operation allowlist.
+- `createOwnedDomain`, `ownedSend`, `ownedClose`, `ownedReceive` and `ownedDispose` are
+  registered private JNI methods. The legacy context-aware factory now refuses rather
+  than entering the singleton/static-daemon path. Non-G1 creation/execute are unchanged.
+- Submission and Close serialize through the domain mutex. Normal Close allocates from
+  the same request sequence and submits real TDLib Close, not a synthetic success or
+  reserved request ID. Ordinary submission leaves sequence space for Close.
+- The controller does not stop context prematurely: that could make a previously queued
+  healthy seal callback take terminal `stop_g1` before the actor handles normal Close.
+  Native `close_impl(false)` performs its normal context revocation instead.
+- A queue control wake unblocks event-driven owned receive; the wake has no API object.
+  A dormant never-submitted domain retires without activating a Td client. Only the
+  receiver normally disposes its manager, outside registry/domain locks. A separately
+  checked never-started construction-failure branch may dispose before receiver ownership.
+- Java `OwnedSession` retains a non-daemon receiver, has per-session event delivery rather
+  than legacy global maps, guards self-join and exposes `requestClose`/`awaitDisposal`.
+  `OPEN` is a transport lifecycle label, **not** authorization or reader readiness.
+  `DOMAIN_DISPOSED_UNVERIFIED` and `FAILED_UNVERIFIED` never permit lease release.
+  The future adapter still owes pending-work/error disposition and ordered correlation;
+  events can race the return from send. This is not a genuine application adapter.
+
+One cached rootless component run compiled **14 native objects plus the private Java
+wrapper (10 classes; 15 checks)**. Independent existing-output consumption matched
+26 archive-original identities, reconstructed the exact coordinator patch/candidate,
+checked the four changed compiled source files, all object/class hashes and 556 protected /
+442 frozen identities. The container positively exited and was removed; the prior candidate
+was unchanged. No component retry or PUBLIC fixture rerun occurred.
+
+The four-path LSP probe was not clean: 42 missing-include cascades on two paths and two
+inconclusive checks. No suppression/config repair was used. Compilation proves only its
+conditional source scope: **no SDK link, JNI registration, manager/Close/wake/thread phase,
+physical stop, parent-death behavior, engine or account was executed**. The PUBLIC probe,
+lease implementation and default SDK were not replaced. Descriptor10 is not mechanically
+bumped for an unaccepted source-only lifetime interface.
+
+**Checkpoint result:** owned lifecycle source plumbing is implemented and compiled under
+the fence. The full stop/resource roster, parent-death safety, actual-phase lifecycle and
+genuine worker/lease orchestration remain open. No positive-stop API or
+`confirmNativeStopped()` caller was added. The remaining
+[activation obligations](read-only-activation-contract.md) are unchanged.

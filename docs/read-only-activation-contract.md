@@ -130,8 +130,12 @@ drain/disposal with controller join. The PUBLIC probe remains unchanged; no seco
 descriptor is introduced. Parent-death containment/re-admission is an additional open
 obligation, not solved by choosing parent ownership.
 
-The source reason is concrete: current candidate JNI still uses the singleton manager,
-and Java retains no receiver join handle. Native normal shutdown can join, but ExitGuard
+The original source reason was concrete: the passive-guard candidate JNI used the singleton
+manager, and Java retained no receiver join handle. The later explicitly permitted
+[owned-lifecycle source increment](native-g1-owned-lifecycle.md#explicitly-permitted-fenced-source-increment)
+now compiles an isolated domain/JNI path and retained receiver/join handle. Its disposal
+observations remain non-releasable; the genuine worker and positive-stop composition are
+not implemented. Native normal shutdown can join, but ExitGuard
 paths detach or skip draining. The singleton declares its manager before its static
 ExitGuard, whose destructor sets the exit flag; normal C++ static teardown is not a chosen
 positive normal-join observation. Earlier last-client cleanup remains a distinct route,

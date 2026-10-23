@@ -1,7 +1,7 @@
 {
   "status": "unaccepted-source-integration-draft",
-  "sourceStage": ".pi/g1-coordinator-draft-passive-rxpjo3gg",
-  "patchSha256": "b0d29bf22cc83ddc5558471c6b5befef246d3248a43e11d191cf7b53a3203060",
+  "sourceStage": ".pi/g1-coordinator-draft-owned-hl_v2bu3",
+  "patchSha256": "ba3ca3a6a046ba75c658ced145c2ddd9c213968753c78712078742742fd6c9af",
   "sourceHashesScope": "All 26 pinned archive-original source identities; not patched candidate private-source hashes",
   "sourceHashes": {
     "td/telegram/Client.h": "b6edd5a77d4678ee9f05def37984d68820f171082d961e82b11f28f0cf5576ff",
@@ -277,7 +277,10 @@
     "existingPreConsumptionAndBothSealPassesWiredAtSource": true,
     "newUnsealedAuthenticationMayLackIdentity": true,
     "missingOrMismatchingApplicablePairRefusedWithoutRepair": true,
-    "admissionWireBytesUnchanged": [112, 120],
+    "admissionWireBytesUnchanged": [
+      112,
+      120
+    ],
     "olderSchemaAdoptionOrMigrationApproved": false,
     "expectedPublicValueFamilies": 40,
     "newIdentityFamilies": 8,
@@ -327,7 +330,10 @@
     "existingPreConsumptionAndBothSealPassesWiredAtSource": true,
     "nameFramingAndScalarGrammarPreserved": true,
     "noCleanupRepairOrHealthyRetryOnPresence": true,
-    "admissionWireBytesUnchanged": [112, 120],
+    "admissionWireBytesUnchanged": [
+      112,
+      120
+    ],
     "olderDescriptorAdoptionApproved": false,
     "expectedPublicValueFamilies": 45,
     "newLeafFamilies": 5,
@@ -364,7 +370,15 @@
     "schemaId": "1f00009bafde1fdb1912e0f47de898b8768c30df4629af3ef409224abe3232dd",
     "orderedNameEqualsProductionSlashTestLfSha256": "e9e774776b232224bacea348b077b26e120d46fc2e2c90d9b7619e12cc297a47",
     "sequencing": "Operator explicitly permitted fenced joined five-role source increment before remaining A1/A2 prerequisites",
-    "sourceGuardPlacements": ["EXISTING original before export", "one-use constructor import", "direct NEW default writer", "runtime writer before mutation", "typed option/state consumers", "seal capture", "same-binlog-actor final validation"],
+    "sourceGuardPlacements": [
+      "EXISTING original before export",
+      "one-use constructor import",
+      "direct NEW default writer",
+      "runtime writer before mutation",
+      "typed option/state consumers",
+      "seal capture",
+      "same-binlog-actor final validation"
+    ],
     "finalSemanticRefusalPrecedesHealthyChanged": true,
     "trustedModeCapturedFromValidatedParameters": true,
     "expectedOriginalSourceFiles": 23,
@@ -394,7 +408,16 @@
     "sequencing": "Operator approved a joined fenced passive-guard source increment before remaining activation contracts close",
     "reactionMarker": "default_reaction_needs_sync absent or exactly Bfalse; no alias for default_reaction_need_sync",
     "topPeersMarker": "top_peers_enabled absent; membership includes present-empty",
-    "sourceGuardPlacements": ["original before export", "one-use option import", "current marker checks before guarded option writes/consumers", "both seal passes before Changed", "public setting request refusal", "pre-mutation and pre-work manager guards", "independent three RPC-producer guards", "result/error continuation guards"],
+    "sourceGuardPlacements": [
+      "original before export",
+      "one-use option import",
+      "current marker checks before guarded option writes/consumers",
+      "both seal passes before Changed",
+      "public setting request refusal",
+      "pre-mutation and pre-work manager guards",
+      "independent three RPC-producer guards",
+      "result/error continuation guards"
+    ],
     "refusal": "Synchronous context revocation with one coalesced deferred Td Close; not physical stop",
     "expectedOriginalSourceFiles": 26,
     "expectedCompileObjects": 14,
@@ -416,16 +439,56 @@
     "factoryFenced": true,
     "phaseExecutionOrEngineAccepted": false,
     "olderDescriptorAdoptionApproved": false,
-    "recordBytes": [112, 120]
+    "recordBytes": [
+      112,
+      120
+    ]
   },
   "nativeFreeze": {
     "active": false,
     "reason": "b596a40b0 and bd7033b7a independently consumed: PUBLIC14+45 and ten objects/seven private Java classes/11 checks, exact records/hashes/logs/symbols/stopped+removed container absence.436 shared frozen inputs equal except mode manifest;3 objects match. Source/leaf component only, not complete A1/A2 or engine acceptance.",
     "previousReason": "b813ff844 and b941cbe4a independently consumed: PUBLIC14+40 and ten objects/seven Java classes/11 checks; release preflight passed",
     "previousReleaseReceipt": ".pi/g1-identity-mirror-freeze-release.json",
-    "releasedByReceipts": [".pi/g1-retired-option-public-verification.json", ".pi/g1-retired-option-compile-verification.json"],
+    "releasedByReceipts": [
+      ".pi/g1-retired-option-public-verification.json",
+      ".pi/g1-retired-option-compile-verification.json"
+    ],
     "releaseReceipt": ".pi/g1-retired-option-freeze-release.json",
     "sourceBaselineReceipt": ".pi/g1-retired-option-source-baseline.json",
     "actualEngineAccepted": false
+  },
+  "ownedDomainSourceCandidate": {
+    "status": "SOURCE_COMPONENT_PARENT_PASS;NO_PHASE_OR_ENGINE_ACCEPTANCE",
+    "parentContractCommit": "3f4bfb21234504d99ef218a646761af40e97bf85",
+    "sourceStage": ".pi/g1-coordinator-draft-owned-hl_v2bu3",
+    "expectedNativeObjects": 14,
+    "expectedChecksIncludingJava": 15,
+    "ownedManager": "one per domain; no singleton G1 binding",
+    "receiver": "sole receive/dispose owner; controller join",
+    "normalClose": "native close request, same request-ID sequence, no direct stop_g1; no premature context stop before queued Close",
+    "wake": "MPSC control wake; event wait; no polling interval selected",
+    "observation": "DOMAIN_DISPOSED_UNVERIFIED or FAILED_UNVERIFIED; never physical stop",
+    "legacyProbe": "unchanged",
+    "positiveStopApi": false,
+    "leaseReleaseCaller": false,
+    "genuineLauncher": false,
+    "parentDeathSafety": "OPEN",
+    "descendantStopContract": "OPEN",
+    "factoryFenced": true,
+    "engineAccepted": false,
+    "schemaDecision": "descriptor10 admission unchanged; unaccepted lifecycle source only; no mechanical bump",
+    "compileEvidence": ".pi/native-g1-coordinator-compile-9ub9h6d0",
+    "parentEvidence": ".pi/reader-owned-domain-g0bvlnqy/parent-result.json",
+    "observedNativeObjects": 14,
+    "observedJavaClasses": 10,
+    "observedChecks": 15,
+    "protectedIdentities": 556,
+    "frozenIdentities": 442,
+    "containerTerminationAndRemovalConfirmed": true,
+    "priorCandidatePreserved": true,
+    "publicFixturesRerun": false,
+    "actualLifecycleExecuted": false,
+    "linkedSdk": false,
+    "lspOutcome": "42 missing-include cascades on two paths; two inconclusive; no clean certificate"
   }
 }

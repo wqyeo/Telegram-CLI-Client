@@ -13,8 +13,9 @@ required-work and actual-stop contract is not established. Coupled activation re
 The operator separately permitted the [fenced passive-guard source increment](native-g1-passive-guards.md)
 before that closure; its component evidence is not activation permission. The subsequent
 [owned-lifecycle contract checkpoint](native-g1-owned-lifecycle.md) selects the future
-parent-held sole lease and receiver-owned drain/disposal with controller join. No lifecycle
-code or positive-stop API is implemented; resource closure and parent-death safety remain open.
+parent-held sole lease and receiver-owned drain/disposal with controller join. A subsequent explicitly
+permitted source increment compiles the domain/JNI/receiver plumbing, not a positive-stop API
+or genuine worker. Resource closure, actual-phase lifecycle and parent-death safety remain open.
 
 ## Product outcome and authority
 
