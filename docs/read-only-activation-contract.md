@@ -123,8 +123,12 @@ The operator selected a **G1-worker-owned ClientManager domain, one managed clie
 explicitly owned, wakeable, joinable receiver**, disposed on a control path before process
 teardown. Context-aware G1 creation/send/receive must belong to that domain rather than
 silently use singleton client IDs or the static daemon receiver. Preserve the separate
-account-free execute probe and legacy paths outside the G1 worker's domain. This does not
-add another profile-lock descriptor or change the sole Java lease owner.
+account-free execute probe and legacy paths outside the G1 worker's domain. The later
+[owned-lifecycle contract checkpoint](native-g1-owned-lifecycle.md) selects the supervising
+Java parent as the future genuine worker's sole lease owner, and receiver-owned native
+drain/disposal with controller join. The PUBLIC probe remains unchanged; no second lock
+descriptor is introduced. Parent-death containment/re-admission is an additional open
+obligation, not solved by choosing parent ownership.
 
 The source reason is concrete: current candidate JNI still uses the singleton manager,
 and Java retains no receiver join handle. Native normal shutdown can join, but ExitGuard
@@ -140,7 +144,9 @@ Then compose it with acknowledgement, EOF, zero exit and completed readers befor
 release. Dedicated ownership alone proves none of those resource postconditions. On
 failure, ExitGuard fallback or uncertainty, do not fabricate clean stop or permitted reopen.
 No JNI signature, stop API/counter, shutdown deadline or complete resource roster is selected
-or implemented by this architecture decision.
+or implemented by this architecture decision. Normal Close must not reuse the current
+`Td::stop_g1()` terminal `auth=destroy` refusal path. The lifecycle checkpoint records the
+operation roles and missing observations; it adds no positive-stop API or lease-release caller.
 
 ## Source disposition and activation go/no-go
 
