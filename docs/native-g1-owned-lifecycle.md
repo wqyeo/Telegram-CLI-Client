@@ -79,15 +79,98 @@ an observer. This checkpoint adds no caller. Abandonment acknowledgements, callb
 settlement, handle removal, kill, timeout or process death do not supply the missing proof.
 Errors and unknown observations must not become successful Close or permitted reopen.
 
-### Parent death is an additional open safety obligation
+### Parent death: selected fail-closed ownership policy
 
 A parent-held OS lock is released when that parent dies, even if its child is still alive.
-The selected placement therefore needs a demonstrated child-containment and re-admission
-solution: a new supervisor must not admit a profile while the old child can still use it.
-A best-effort signal, PID check, deadline or process-death observation is not assumed to
-close that race or prove clean flush. Do not add a second lock descriptor or change the
-112/120-byte records to solve it without a separate decision. This remains an activation
-blocker; parent ownership alone is not a complete exclusive-lifetime proof.
+The operator selected retaining that **sole parent-owned lease** and designing a separate
+**durable active-generation claim**. An existing, partial, malformed or uncertain claim
+must refuse admission without deletion, expiry, PID-based recovery, adoption or repair.
+A crash can consequently strand the profile indefinitely, even if its processes later die.
+That availability cost is explicitly accepted; automatic recovery is not part of this policy.
+The child still never opens `profile.lock`; no second or replacement lease is permitted.
+
+This is a **selected design policy, not an implemented or demonstrated ownership barrier**.
+The existing source does not enforce it:
+
+- `ProfileStore.Lease.nativeLive` and the same-JVM held-lock set are in-memory facts.
+  A new JVM can acquire the OS lock after parent death; acquiring it is not native admission.
+- `StorageContext` binds a generation in memory and assumes the caller retains its lease.
+  It does not persist that generation as active ownership.
+- The 112/120-byte admission record records configuration and a fixed `G1SEALED` tag.
+  A sealed record means neither inactive ownership nor a cleanly closed previous session.
+  Its flags and tag must not be repurposed as an ownership bit.
+
+#### Candidate publication and cleanup ordering
+
+The following protocol is a bounded implementation proposal. The concrete artifact,
+encoding, durability primitive and IPC roles still require specification before code.
+It does not select a new wire tag, stop-observer API or proof capability.
+
+1. The parent acquires and retains the original lease, validates the trusted profile
+   identity, and refuses any existing ownership claim **before launching another worker**.
+   Refusal must not inspect or normalize a conflicting claim into permission to proceed.
+2. While holding that lease, the parent exclusively creates the claim, writes its complete
+   generation/profile/policy binding and synchronizes its file. No overwrite or replacement
+   of an older claim is allowed. Any failed or uncertain publication stops startup and
+   retains the artifact; it does not grant a second attempt.
+3. The containing-directory publication must also be durably synchronized **before native
+   profile/context creation, database access or engine activation is permitted**. File
+   synchronization alone is insufficient. One candidate is an ownership-only worker
+   preparation phase, launched only after step 2: it validates the matching claim and
+   attested directory, synchronizes that directory and acknowledges the binding. It must
+   not create a StorageContext, native namespace, files directory or TDLib client yet.
+   This avoids assuming a new parent-side SDK load or an undocumented directory-force
+   guarantee. The preparation primitive and enforcement are not implemented or accepted.
+4. Only after matching durable-publication confirmation may the parent grant the worker
+   one generation-bound permission to begin native work. Private IPC EOF, a stale message
+   or an unmatched generation never supplies that grant. The worker must enforce this
+   gate at the earliest native entry, not only at an application command handler.
+5. A later supervisor which acquires the OS lock still refuses any surviving claim. It
+   must not signal an old PID, wait for a deadline, decide the claim is stale or clear it.
+   This prevents lock reacquisition alone from authorizing an overlapping generation.
+6. In the same live run, cleanup requires the still-valid original lease, the exact owned
+   claim and matching generation/profile, the genuine positive resource-stop observation,
+   and acknowledgement, EOF, zero worker exit and completed readers. Only then may the
+   parent remove its own claim and durably synchronize the containing directory before
+   reporting clean completion and releasing the lease. An unlink result alone is not a
+   durable-cleanup result. Any unknown observation must not become successful Close.
+
+Cleanup cannot precede worker exit: otherwise parent death could expose an absent claim
+while the old worker can still use the profile. Claim cleanup does not upgrade an unsealed
+NEW store into valid EXISTING storage or bypass any native admission/schema check. A proven
+never-launched cancellation branch, if desired, needs a separate exact contract; exceptions
+from process creation, promise disposal or context abandonment do not establish that case.
+
+| Failure point | Required disposition in the proposed protocol |
+|---|---|
+| Before claim creation and before any worker launch | No native work has been permitted; ordinary admission rules still apply. |
+| During publication, before launch or before a grant | Retain any artifact and refuse a later claim-bearing profile; no grant is inferred. |
+| After durable publication, including parent death before or after the grant | Claim remains an admission barrier; the old worker may still exist. |
+| During Close, disposal or transport shutdown without the full observation composition | Do not remove the claim or report clean completion. |
+| After full observations, before/during claim removal | Old worker has already exited; cleanup failure is not reported as clean success. Any surviving/reappearing claim refuses future admission. |
+| After durable cleanup but before lease release | Native work is already stopped and the worker has exited; the lease still serializes normal contenders. |
+
+A machine crash before a confirmed grant cannot justify assuming native work occurred or
+completed. Durability and restart behavior need actual filesystem/phase evidence; this
+ordering argument is not a power-loss, rollback or universal atomicity guarantee.
+
+#### Implementation gates still open
+
+- Specify one fixed claim location outside the native slot's strict component inventory,
+  its bounded encoding, exact generation/profile/policy binding and physical file checks.
+  Do not put secrets, key hashes, account data, PID liveness or expiry into that contract.
+- Specify and validate the supported directory synchronization and private preparation/
+  grant protocol. No silent fallback to an unsupported force operation or eager native open.
+- Enforce the barrier in all applicable admission/creation paths. An older binary which
+  ignores the claim is not made safe by the new protocol; compatible admission identity
+  and rejection of older descriptors must be explicit, without automatic adoption.
+- Establish the resource-stop roster above and its observer before implementing cleanup.
+  `confirmNativeStopped()` and domain-disposal acknowledgements remain insufficient.
+
+The current descriptor10, its 112/120-byte records, default SDK and factory fence are
+unchanged. The exact ownership format and publication mechanism have not been selected or
+implemented. No parent-death, power-loss or native lifecycle test was run for this design.
+The policy closes a recovery trade-off, **not** the activation safety obligation.
 
 ## Bounded source findings and implementation boundary
 
